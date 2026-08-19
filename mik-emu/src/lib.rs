@@ -275,13 +275,38 @@ impl Machine {
         unreachable!();
     }
 
+    /// Deliver a page fault: save the faulting PC, set fault code and VA in
+    /// registers, and jump to the page-fault handler at `mem64[0x2010]`.
+    fn deliver_page_fault(&mut self, faulting_pc: u64, fault: PageFault) {
+        self.epc = faulting_pc;
+        self.regs[10] = fault.code;
+        self.regs[11] = fault.va;
+        // Read the handler address from physical memory (always physical).
+        let handler = u64::from_le_bytes(
+            self.mem[0x2010..0x2018].try_into().unwrap(),
+        );
+        self.pc = handler;
+    }
+
     pub fn step<W: Write>(&mut self, out: &mut W) -> Result<(), String> {
-        let pc = self.pc as usize;
+        let base = self.pc;
+
+        // Translate the PC for instruction fetch.
+        let phys_pc = match self.translate(base, Access::Fetch) {
+            Ok(pa) => pa,
+            Err(fault) => {
+                self.deliver_page_fault(base, fault);
+                self.regs[0] = 0;
+                return Ok(());
+            }
+        };
+
+        let pc = phys_pc as usize;
         if pc + 8 > self.mem.len() {
-            return Err(format!("pc out of bounds: {:#x}", self.pc));
+            return Err(format!("pc out of bounds: {:#x}", phys_pc));
         }
-        if self.pc < LOAD_ADDR || self.pc >= RAM_SIZE || self.pc % 8 != 0 {
-            return Err(format!("pc misaligned or in reserved memory: {:#x}", self.pc));
+        if phys_pc % 8 != 0 {
+            return Err(format!("pc misaligned: {:#x}", phys_pc));
         }
 
         let word = u64::from_le_bytes(
@@ -296,10 +321,8 @@ impl Machine {
         let rs2 = ((word >> 44) & 0xF) as usize;
         let imm = sext44(word);
 
-        // The address of the current instruction, used for branch targets.
-        let base = self.pc;
         // Default: advance to the next instruction.
-        self.pc += 8;
+        self.pc = base + 8;
 
         match opcode {
             0x00 => {
@@ -333,23 +356,55 @@ impl Machine {
             }
             0x07 => {
                 // LOAD8
-                let addr = self.regs[rs1].wrapping_add(imm as u64);
-                self.regs[rd] = self.read8(addr)? as u64;
+                let va = self.regs[rs1].wrapping_add(imm as u64);
+                let pa = match self.translate(va, Access::Load) {
+                    Ok(p) => p,
+                    Err(fault) => {
+                        self.deliver_page_fault(base, fault);
+                        self.regs[0] = 0;
+                        return Ok(());
+                    }
+                };
+                self.regs[rd] = self.read8(pa)? as u64;
             }
             0x08 => {
                 // LOAD64
-                let addr = self.regs[rs1].wrapping_add(imm as u64);
-                self.regs[rd] = self.read64(addr)?;
+                let va = self.regs[rs1].wrapping_add(imm as u64);
+                let pa = match self.translate(va, Access::Load) {
+                    Ok(p) => p,
+                    Err(fault) => {
+                        self.deliver_page_fault(base, fault);
+                        self.regs[0] = 0;
+                        return Ok(());
+                    }
+                };
+                self.regs[rd] = self.read64(pa)?;
             }
             0x09 => {
                 // STORE8
-                let addr = self.regs[rs1].wrapping_add(imm as u64);
-                self.write8(addr, self.regs[rs2] as u8, out)?;
+                let va = self.regs[rs1].wrapping_add(imm as u64);
+                let pa = match self.translate(va, Access::Store) {
+                    Ok(p) => p,
+                    Err(fault) => {
+                        self.deliver_page_fault(base, fault);
+                        self.regs[0] = 0;
+                        return Ok(());
+                    }
+                };
+                self.write8(pa, self.regs[rs2] as u8, out)?;
             }
             0x0A => {
                 // STORE64
-                let addr = self.regs[rs1].wrapping_add(imm as u64);
-                self.write64(addr, self.regs[rs2])?;
+                let va = self.regs[rs1].wrapping_add(imm as u64);
+                let pa = match self.translate(va, Access::Store) {
+                    Ok(p) => p,
+                    Err(fault) => {
+                        self.deliver_page_fault(base, fault);
+                        self.regs[0] = 0;
+                        return Ok(());
+                    }
+                };
+                self.write64(pa, self.regs[rs2])?;
             }
             0x0B => {
                 // BEQ
