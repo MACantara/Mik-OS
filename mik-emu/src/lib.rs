@@ -32,6 +32,7 @@ pub struct Machine {
     pub pc: u64,
     pub epc: u64,
     pub csrs: [u64; 256],
+    tlb: [TlbEntry; TLB_SIZE],
     pub mem: Vec<u8>,
     pub halted: bool,
     pub exit_code: u8,
@@ -64,6 +65,32 @@ pub struct PageFault {
     pub va: u64,
 }
 
+/// A single TLB entry.
+#[derive(Debug, Clone, Copy)]
+struct TlbEntry {
+    valid: bool,
+    vpn: u64,       // virtual page number (va >> 12)
+    ppn: u64,       // physical page number (pa >> 12)
+    pte_addr: u64,  // physical address of the leaf PTE (for A/D updates)
+    writable: bool, // PTE.W
+    nx: bool,       // PTE.NX
+}
+
+const TLB_SIZE: usize = 16;
+
+impl TlbEntry {
+    const fn empty() -> Self {
+        TlbEntry {
+            valid: false,
+            vpn: 0,
+            ppn: 0,
+            pte_addr: 0,
+            writable: false,
+            nx: false,
+        }
+    }
+}
+
 impl Machine {
     pub fn new() -> Self {
         let mut m = Machine {
@@ -71,6 +98,7 @@ impl Machine {
             pc: LOAD_ADDR,
             epc: 0,
             csrs: [0; 256],
+            tlb: [TlbEntry::empty(); TLB_SIZE],
             mem: vec![0; RAM_SIZE as usize],
             halted: false,
             exit_code: 0,
@@ -126,12 +154,19 @@ impl Machine {
         Ok(())
     }
 
+    /// Flush the entire TLB.
+    pub fn flush_tlb(&mut self) {
+        for entry in self.tlb.iter_mut() {
+            *entry = TlbEntry::empty();
+        }
+    }
+
     /// Translate a virtual address to a physical address.
     ///
     /// When paging is disabled (`PMODE = 0`), this is the identity function.
-    /// When paging is enabled, it walks the 4-level page table starting at
-    /// `PTBR`. On success, returns the physical address. On failure, returns
-    /// a `PageFault` with the fault code and faulting virtual address.
+    /// When paging is enabled, it checks the TLB first, then walks the 4-level
+    /// page table starting at `PTBR`. On success, returns the physical address.
+    /// On failure, returns a `PageFault` with the fault code and faulting VA.
     pub fn translate(&mut self, va: u64, access: Access) -> Result<u64, PageFault> {
         if self.csrs[CSR_PMODE as usize] == 0 {
             return Ok(va);
@@ -142,6 +177,39 @@ impl Machine {
             return Err(PageFault { code: 4, va });
         }
 
+        let vpn = va >> 12;
+        let offset = va & 0xFFF;
+        let tlb_index = (vpn as usize) & (TLB_SIZE - 1);
+
+        // Check the TLB.
+        let entry = &self.tlb[tlb_index];
+        if entry.valid && entry.vpn == vpn {
+            // TLB hit — check permissions from cached flags.
+            if access == Access::Store && !entry.writable {
+                return Err(PageFault { code: 2, va });
+            }
+            if access == Access::Fetch && entry.nx {
+                return Err(PageFault { code: 3, va });
+            }
+            // Update A/D bits in the leaf PTE on TLB hits.
+            let pte = u64::from_le_bytes(
+                self.mem[entry.pte_addr as usize..entry.pte_addr as usize + 8]
+                    .try_into()
+                    .unwrap(),
+            );
+            let mut new_pte = pte | PTE_A;
+            if access == Access::Store {
+                new_pte |= PTE_D;
+            }
+            if new_pte != pte {
+                let bytes = new_pte.to_le_bytes();
+                self.mem[entry.pte_addr as usize..entry.pte_addr as usize + 8]
+                    .copy_from_slice(&bytes);
+            }
+            return Ok((entry.ppn << 12) | offset);
+        }
+
+        // TLB miss — walk the page table.
         let mut table = self.csrs[CSR_PTBR as usize] & !0xFFF; // page-align
 
         for level in (0..4u32).rev() {
@@ -184,9 +252,19 @@ impl Machine {
                         .copy_from_slice(&bytes);
                 }
 
-                let ppn = pte & PTE_PPN_MASK;
-                let offset = va & 0xFFF;
-                return Ok(ppn | offset);
+                let ppn = (pte & PTE_PPN_MASK) >> 12;
+
+                // Fill the TLB.
+                self.tlb[tlb_index] = TlbEntry {
+                    valid: true,
+                    vpn,
+                    ppn,
+                    pte_addr,
+                    writable: pte & PTE_W != 0,
+                    nx: pte & PTE_NX != 0,
+                };
+
+                return Ok((ppn << 12) | offset);
             } else {
                 // Intermediate PTE — descend to next table.
                 table = pte & PTE_PPN_MASK;
@@ -314,9 +392,14 @@ impl Machine {
                 // WRCSR: CSR[imm] = rs1
                 let csr = (imm as u64) as usize & 0xFF;
                 self.csrs[csr] = self.regs[rs1];
+                // Flush TLB on PTBR or PMODE writes.
+                if csr == CSR_PTBR as usize || csr == CSR_PMODE as usize {
+                    self.flush_tlb();
+                }
             }
             0x13 => {
-                // SFENCE: flush TLB (no-op until TLB exists, but accepted)
+                // SFENCE: flush the TLB.
+                self.flush_tlb();
             }
             _ => {
                 return Err(format!("illegal opcode: {:#x}", opcode));
