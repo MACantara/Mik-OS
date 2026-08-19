@@ -41,6 +41,29 @@ pub struct Machine {
 pub const CSR_PTBR: u64 = 0;
 pub const CSR_PMODE: u64 = 1;
 
+// PTE bits.
+const PTE_P: u64 = 1 << 0; // Present
+const PTE_W: u64 = 1 << 1; // Writable
+const PTE_A: u64 = 1 << 3; // Accessed
+const PTE_D: u64 = 1 << 4; // Dirty
+const PTE_NX: u64 = 1 << 63; // No Execute
+const PTE_PPN_MASK: u64 = ((1u64 << 36) - 1) << 12; // bits 12..47
+
+/// The type of memory access being translated.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum Access {
+    Load,
+    Store,
+    Fetch,
+}
+
+/// A page fault with a fault code and the faulting virtual address.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct PageFault {
+    pub code: u64,
+    pub va: u64,
+}
+
 impl Machine {
     pub fn new() -> Self {
         let mut m = Machine {
@@ -101,6 +124,77 @@ impl Machine {
         let bytes = value.to_le_bytes();
         self.mem[addr as usize..addr as usize + 8].copy_from_slice(&bytes);
         Ok(())
+    }
+
+    /// Translate a virtual address to a physical address.
+    ///
+    /// When paging is disabled (`PMODE = 0`), this is the identity function.
+    /// When paging is enabled, it walks the 4-level page table starting at
+    /// `PTBR`. On success, returns the physical address. On failure, returns
+    /// a `PageFault` with the fault code and faulting virtual address.
+    pub fn translate(&mut self, va: u64, access: Access) -> Result<u64, PageFault> {
+        if self.csrs[CSR_PMODE as usize] == 0 {
+            return Ok(va);
+        }
+
+        // Check canonical address: bits 63..48 must be zero.
+        if va >> 48 != 0 {
+            return Err(PageFault { code: 4, va });
+        }
+
+        let mut table = self.csrs[CSR_PTBR as usize] & !0xFFF; // page-align
+
+        for level in (0..4u32).rev() {
+            let shift = 12 + 9 * level;
+            let index = ((va >> shift) & 0x1FF) as usize;
+            let pte_addr = table + (index as u64) * 8;
+
+            // Read the PTE from physical memory.
+            if pte_addr + 8 > RAM_SIZE {
+                return Err(PageFault { code: 1, va });
+            }
+            let pte = u64::from_le_bytes(
+                self.mem[pte_addr as usize..pte_addr as usize + 8]
+                    .try_into()
+                    .unwrap(),
+            );
+
+            // Check present.
+            if pte & PTE_P == 0 {
+                return Err(PageFault { code: 1, va });
+            }
+
+            if level == 0 {
+                // Leaf PTE — check permissions.
+                if access == Access::Store && pte & PTE_W == 0 {
+                    return Err(PageFault { code: 2, va });
+                }
+                if access == Access::Fetch && pte & PTE_NX != 0 {
+                    return Err(PageFault { code: 3, va });
+                }
+
+                // Set Accessed (and Dirty for stores) bits.
+                let mut new_pte = pte | PTE_A;
+                if access == Access::Store {
+                    new_pte |= PTE_D;
+                }
+                if new_pte != pte {
+                    let bytes = new_pte.to_le_bytes();
+                    self.mem[pte_addr as usize..pte_addr as usize + 8]
+                        .copy_from_slice(&bytes);
+                }
+
+                let ppn = pte & PTE_PPN_MASK;
+                let offset = va & 0xFFF;
+                return Ok(ppn | offset);
+            } else {
+                // Intermediate PTE — descend to next table.
+                table = pte & PTE_PPN_MASK;
+            }
+        }
+
+        // Unreachable: the loop always returns at level 0.
+        unreachable!();
     }
 
     pub fn step<W: Write>(&mut self, out: &mut W) -> Result<(), String> {
