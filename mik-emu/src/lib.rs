@@ -31,10 +31,15 @@ pub struct Machine {
     pub regs: [u64; 16],
     pub pc: u64,
     pub epc: u64,
+    pub csrs: [u64; 256],
     pub mem: Vec<u8>,
     pub halted: bool,
     pub exit_code: u8,
 }
+
+// CSR numbers.
+pub const CSR_PTBR: u64 = 0;
+pub const CSR_PMODE: u64 = 1;
 
 impl Machine {
     pub fn new() -> Self {
@@ -42,6 +47,7 @@ impl Machine {
             regs: [0; 16],
             pc: LOAD_ADDR,
             epc: 0,
+            csrs: [0; 256],
             mem: vec![0; RAM_SIZE as usize],
             halted: false,
             exit_code: 0,
@@ -204,6 +210,19 @@ impl Machine {
             0x10 => {
                 // ERET
                 self.pc = self.epc;
+            }
+            0x11 => {
+                // RDCSR: rd = CSR[imm]
+                let csr = (imm as u64) as usize & 0xFF;
+                self.regs[rd] = self.csrs[csr];
+            }
+            0x12 => {
+                // WRCSR: CSR[imm] = rs1
+                let csr = (imm as u64) as usize & 0xFF;
+                self.csrs[csr] = self.regs[rs1];
+            }
+            0x13 => {
+                // SFENCE: flush TLB (no-op until TLB exists, but accepted)
             }
             _ => {
                 return Err(format!("illegal opcode: {:#x}", opcode));

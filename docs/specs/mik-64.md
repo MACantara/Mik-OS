@@ -116,8 +116,11 @@ Zero-extension is used only for `LOAD8` and `LOAD16` results.
 | `0x0E` | `TRAP` | System call: `epc = pc; pc = mem64[0x2000]; x10 = imm` |
 | `0x0F` | `JMPR` | `pc = rs1` |
 | `0x10` | `ERET` | `pc = epc` |
+| `0x11` | `RDCSR` | `rd = CSR[imm & 0xFF]` |
+| `0x12` | `WRCSR` | `CSR[imm & 0xFF] = rs1` |
+| `0x13` | `SFENCE` | Flush the TLB |
 
-Opcodes `0x11` .. `0xFF` are reserved and cause an illegal-instruction fault
+Opcodes `0x14` .. `0xFF` are reserved and cause an illegal-instruction fault
 in the MVP.
 
 ### 6.2 Detailed semantics
@@ -291,10 +294,53 @@ Jump to the address contained in `rs1`. The `rd`, `rs2`, and `imm` fields are
 ignored. This is the only way to implement a return from a subroutine or a
 function pointer in the MVP.
 
+#### `RDCSR` (0x11)
+
+```
+RDCSR rd, csr_imm
+```
+
+`rd = CSR[csr_imm & 0xFF]`
+
+Read a control/status register. The CSR number is encoded in the 44-bit
+immediate field (only the low 8 bits are used). See section 6.4 for the CSR
+map.
+
+#### `WRCSR` (0x12)
+
+```
+WRCSR rs1, csr_imm
+```
+
+`CSR[csr_imm & 0xFF] = rs1`
+
+Write a control/status register. The `rd` and `rs2` fields are ignored.
+
+#### `SFENCE` (0x13)
+
+```
+SFENCE
+```
+
+Flush the translation lookaside buffer (TLB). All register and immediate
+fields are ignored. This is a no-op when paging is disabled.
+
 ### 6.3 Notes on register x0
 
 Because `x0` is hard-wired to zero, `ADDI x0, x0, 0` is a no-op and
 `BEQ x1, x0, offset` is a common way to branch when `x1` is zero.
+
+### 6.4 Control/status registers (CSRs)
+
+The CSR file has 256 64-bit entries, accessed via `RDCSR` and `WRCSR`.
+
+| CSR number | Name   | Purpose                                          |
+|------------|--------|--------------------------------------------------|
+| 0          | `PTBR` | Page table base register. Physical address of the PML4 root table. Must be page-aligned. |
+| 1          | `PMODE`| Paging mode. 0 = disabled (flat physical), 1 = enabled (virtual addresses translated). |
+
+CSRs 2..255 are reserved for future use. See `docs/specs/mik-64-paging.md` for
+the full paging specification.
 
 ## 7. Boot protocol
 

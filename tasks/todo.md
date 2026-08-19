@@ -1,17 +1,25 @@
-# Mik OS MVP Todo
+# Mik OS Paging Todo
 
-## Phase 1: Mik-64 Machine and Emulator
+## Phase 1: Emulator — CSR Instructions and Page Table Walker
 
-- [x] Task 1: Write the Mik-64 machine specification
-- [x] Task 2: Build the Mik-64 emulator in Rust
-- [x] Task 3: Write the Mik OS kernel boot path
-- [x] Task 6: Add a build/run convenience script
+- [ ] Task 7: Add CSR instructions (RDCSR/WRCSR/SFENCE) to the emulator
+- [ ] Task 8: Implement the 4-level page table walker
+- [ ] Task 9: Add the direct-mapped TLB
+- [ ] Task 10: Wire paging into memory accesses and add page-fault delivery
 
-## Phase 2: Core OS Concepts
+## Checkpoint: Emulator Paging Complete
 
-- [x] Task 4: Add a simple physical memory manager
-- [x] Task 5: Implement interrupts and a system call
+- [ ] All emulator paging tests pass
+- [ ] Flat-memory tests still pass
 
-## Checkpoint
+## Phase 2: Kernel — Enable Paging
 
-- [x] MVP complete: one command boots Mik OS in the Mik-64 emulator
+- [ ] Task 11: Kernel sets up an identity map and enables paging
+- [ ] Task 12: Kernel handles a page fault
+
+## Checkpoint: Paging MVP Complete
+
+- [ ] Kernel boots with paging enabled
+- [ ] Page faults are handled
+- [ ] All tests pass
+- [ ] `.\run.ps1` works end-to-end
