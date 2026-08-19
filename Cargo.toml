@@ -1,0 +1,3 @@
+[workspace]
+members = ["mik-emu", "mik-os"]
+resolver = "2"
