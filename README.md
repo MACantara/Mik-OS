@@ -105,4 +105,4 @@ See [`tasks/plan.md`](tasks/plan.md). The most likely future directions are:
 
 ## License
 
-This is a personal learning project. No license has been chosen yet.
+MIT
