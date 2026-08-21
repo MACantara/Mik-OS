@@ -63,6 +63,8 @@ custom ISA and there is no Rust target for it. The kernel demonstrates:
 - **Subroutines:** uses `JMPR` for returns from `alloc_page` and `free_page`.
 - **System calls:** sets a trap vector at `0x2000`, then uses `TRAP`/`ERET` to
   enter and exit a syscall handler.
+- **Paging:** builds a 4-level identity-mapped page table, sets `PTBR`, enables
+  `PMODE`, and continues executing with virtual memory.
 
 The kernel flat binary is produced by the `mik-os` crate and then loaded by
 `mik-emu`.
@@ -91,10 +93,14 @@ The kernel is loaded at `0x400000`.
 4. The kernel initializes:
    - `next_page` at `0x700000` to `0x701000`.
    - The trap vector at `0x2000` to the syscall handler.
-5. The kernel calls `alloc_page`, writes a character, prints it, frees the page,
-   invokes a `print_char` syscall, and finally prints the rest of the boot
-   message.
-6. The kernel executes `TRAP 0` to halt.
+   - The page-fault vector at `0x2010` to a placeholder handler.
+5. The kernel calls `alloc_page`, writes a character, prints it, saves the
+   page, then allocates 7 consecutive pages for a PML4, PDPT, PD, and four PTs.
+6. The kernel fills the page tables with an identity mapping for the low 8 MiB,
+   writes `PTBR`, and enables `PMODE`.
+7. With paging on, the kernel frees the demo page, invokes a `print_char`
+   syscall, prints the rest of the boot message, and finally executes `TRAP 0`
+   to halt.
 
 ## Syscall Flow
 
@@ -131,11 +137,13 @@ Tests are at two levels:
   `JMPR` and `TRAP`/`ERET`.
 - **Kernel integration test** in `mik-os/tests/kernel_boot.rs` verifies the full
   boot output: `!?Mik OS\n`.
+- **Paging integration test** in `mik-os/tests/kernel_paging.rs` verifies the
+  kernel enables `PMODE` and `PTBR` and still prints the boot message.
 
 Run all tests with `cargo test`.
 
 ## Future Directions
 
-- Add paging and a virtual-to-physical translation unit to Mik-64.
+- Task 12: add a real kernel page-fault handler that inspects `x10`/`x11`.
 - Port Mik OS to real x86-64 under QEMU, written in Rust.
 - Build a small Mik-64 assembler so the kernel can be written as text assembly.
