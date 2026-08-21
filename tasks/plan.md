@@ -166,13 +166,13 @@ message and halts. Add a deliberate page fault (e.g., access an unmapped VA) to
 demonstrate the handler runs.
 
 **Acceptance criteria:**
-- [ ] Page-fault handler is installed at `0x2010`.
-- [ ] A deliberate access to an unmapped VA triggers the handler.
-- [ ] The handler prints a fault message and halts.
-- [ ] Integration test verifies the fault output.
+- [x] Page-fault handler is installed at `0x2010`.
+- [x] A deliberate access to an unmapped VA triggers the handler.
+- [x] The handler prints a fault message and halts.
+- [x] Integration test verifies the fault output.
 
 **Verification:**
-- [ ] `cargo test -p mik-os --test pagefault` passes.
+- [x] `cargo test -p mik-os --test pagefault` passes.
 
 **Dependencies:** Task 11
 
@@ -185,7 +185,7 @@ demonstrate the handler runs.
 ### Checkpoint: Paging MVP Complete
 
 - [x] Kernel boots with paging enabled.
-- [ ] Page faults are handled.
+- [x] Page faults are handled.
 - [x] All tests pass.
 - [x] `.\run.ps1` works end-to-end.
 

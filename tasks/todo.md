@@ -15,11 +15,11 @@
 ## Phase 2: Kernel — Enable Paging
 
 - [x] Task 11: Kernel sets up an identity map and enables paging
-- [ ] Task 12: Kernel handles a page fault
+- [x] Task 12: Kernel handles a page fault
 
 ## Checkpoint: Paging MVP Complete
 
 - [x] Kernel boots with paging enabled
-- [ ] Page faults are handled
+- [x] Page faults are handled
 - [x] All tests pass
 - [x] `.\run.ps1` works end-to-end

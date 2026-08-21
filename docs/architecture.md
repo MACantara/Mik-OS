@@ -139,11 +139,14 @@ Tests are at two levels:
   boot output: `!?Mik OS\n`.
 - **Paging integration test** in `mik-os/tests/kernel_paging.rs` verifies the
   kernel enables `PMODE` and `PTBR` and still prints the boot message.
+- **Page-fault integration test** in `mik-os/tests/pagefault.rs` verifies the
+  kernel's handler catches an unmapped access and prints a diagnostic.
 
 Run all tests with `cargo test`.
 
 ## Future Directions
 
-- Task 12: add a real kernel page-fault handler that inspects `x10`/`x11`.
 - Port Mik OS to real x86-64 under QEMU, written in Rust.
 - Build a small Mik-64 assembler so the kernel can be written as text assembly.
+- Expand the page-fault handler to inspect `x10`/`x11` and recover or allocate
+  pages for demand paging.
