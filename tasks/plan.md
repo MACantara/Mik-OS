@@ -141,15 +141,15 @@ map for its code/data region, install a page-fault handler at `0x2010`, set
 message after paging is enabled.
 
 **Acceptance criteria:**
-- [ ] Kernel builds page tables in physical memory.
-- [ ] Kernel sets PTBR to the PML4 root.
-- [ ] Kernel enables paging (PMODE = 1).
-- [ ] Kernel prints its boot message after paging is on.
-- [ ] `.\run.ps1` produces the expected output.
+- [x] Kernel builds page tables in physical memory.
+- [x] Kernel sets PTBR to the PML4 root.
+- [x] Kernel enables paging (PMODE = 1).
+- [x] Kernel prints its boot message after paging is on.
+- [x] `.\run.ps1` produces the expected output.
 
 **Verification:**
-- [ ] `cargo test -p mik-os` passes.
-- [ ] `.\run.ps1` prints the boot message.
+- [x] `cargo test -p mik-os` passes.
+- [x] `.\run.ps1` prints the boot message.
 
 **Dependencies:** Task 10
 
@@ -184,10 +184,10 @@ demonstrate the handler runs.
 
 ### Checkpoint: Paging MVP Complete
 
-- [ ] Kernel boots with paging enabled.
+- [x] Kernel boots with paging enabled.
 - [ ] Page faults are handled.
-- [ ] All tests pass.
-- [ ] `.\run.ps1` works end-to-end.
+- [x] All tests pass.
+- [x] `.\run.ps1` works end-to-end.
 
 ## Risks and Mitigations
 

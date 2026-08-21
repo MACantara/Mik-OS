@@ -8,11 +8,11 @@ will be ported to real x86-64.
 ## 1. Overview
 
 - 64-bit general-purpose registers
-- 64-bit physical address space (flat, no paging in the MVP)
+- 64-bit physical address space, with optional 4-level paging
 - Fixed 64-bit instruction words
 - Simple load/store architecture
 - Memory-mapped serial I/O
-- Minimal trap model (reserved for later kernel use)
+- Trap and page-fault vectors
 
 ## 2. Data types and widths
 
@@ -43,14 +43,14 @@ There are 16 general-purpose integer registers, each 64 bits wide:
 |------|-------|------|
 | `pc` | 64 bits | Program counter |
 
-There is no privileged status register, no flags register, and no page table
-base register in the MVP.
+Paging is controlled through the `PTBR` and `PMODE` CSRs; see section 6.4.
 
 ## 4. Memory model
 
-Mik-64 uses a **flat physical memory model** in the MVP. Every address is a
-physical byte address. There are no page tables, no virtual-to-physical
-translation, and no memory protection.
+Mik-64 boots with a **flat physical memory model**; the kernel can later enable
+4-level paging by setting `PMODE`. When paging is disabled every address is a
+physical byte address. When paging is enabled virtual addresses are translated
+through the page table rooted at `PTBR`.
 
 The default machine has 128 MiB of RAM:
 
@@ -379,10 +379,14 @@ All other MMIO/reserved addresses are ignored on write and return 0 on read.
 
 ## 9. Exceptions and traps
 
-The `TRAP` instruction is the MVP's system-call mechanism. It stores the
-return address in the internal `epc` register, writes the syscall number to
-`x10`, and jumps to the address stored at the trap vector `0x2000`. `ERET`
-returns to `epc`.
+The `TRAP` instruction is the system-call mechanism. It stores the return
+address in the internal `epc` register, writes the syscall number to `x10`, and
+jumps to the address stored at the trap vector `0x2000`. `ERET` returns to
+`epc`.
+
+Page faults jump to the address stored at `0x2010`. The fault code is placed in
+`x10` and the faulting virtual address in `x11`. See `docs/specs/mik-64-paging.md`
+for the fault codes.
 
 Privilege levels and nested traps are not implemented in the MVP. Illegal
 opcodes and out-of-bounds memory accesses halt the emulator with an error.
