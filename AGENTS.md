@@ -53,7 +53,9 @@ mik-emu/
 mik-os/
   src/lib.rs                # Hand-assembled Mik-64 kernel
   src/main.rs               # Binary builder
-  tests/kernel_boot.rs      # Kernel integration test
+  tests/kernel_boot.rs      # Boot output test
+  tests/kernel_paging.rs    # Paging enablement test
+  tests/pagefault.rs        # Kernel page-fault handler test
 run.ps1                     # One-command build/run
 tasks/
   plan.md                   # Implementation plan with acceptance criteria
@@ -62,12 +64,14 @@ tasks/
 
 ## Important Decisions
 
-- Flat physical memory model in the MVP; paging is added later.
+- Flat physical memory at boot; the kernel builds page tables and enables 4-level
+  paging via `PTBR` and `PMODE`.
 - Mik-64 uses fixed 64-bit instruction words, a simple load/store architecture,
   and memory-mapped serial I/O.
 - Initial boot: flat binary loaded at `0x400000`, `x15` (SP) set to `0x8000000`,
   PC set to `0x400000`.
 - The trap vector lives at `0x2000`.
+- The page-fault vector lives at `0x2010`.
 - The bump allocator keeps its `next_page` counter at `0x700000`.
 
 See [`docs/decisions/`](docs/decisions/) for full ADRs.
