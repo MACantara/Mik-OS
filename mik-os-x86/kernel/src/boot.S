@@ -14,7 +14,7 @@ _start:
     cli
     lea esp, [stack_top]
 
-    # identity map the first 2 MiB with a huge page
+    # identity map the first 6 MiB with 2 MiB huge pages
     lea eax, [pdpt]
     or eax, 0x03
     mov [pml4], eax
@@ -25,6 +25,10 @@ _start:
 
     mov eax, 0x83
     mov [pd], eax
+    mov eax, 0x200083
+    mov [pd + 8], eax
+    mov eax, 0x400083
+    mov [pd + 16], eax
 
     # enable PAE
     mov eax, cr4
