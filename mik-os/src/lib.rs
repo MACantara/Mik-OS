@@ -4,7 +4,7 @@
 //! `mik_emu::encode`. This crate produces the flat binary that the emulator
 //! loads. The real Rust Mik OS for x86-64 will come later.
 
-use mik_emu::encode;
+use mik_emu::{encode, CSR_TIMER};
 
 const PTE_P: u64 = 1 << 0;
 const PTE_W: u64 = 1 << 1;
@@ -449,6 +449,88 @@ pub fn kernel_user_mode() -> Vec<u8> {
 
     a.label("done");
     a.emit(encode(0x00, 0, 0, 0, 0));           // halt (fallback)
+
+    a.label("user_code_data");
+
+    finalize(a, load_addr, string_idx, &user_code)
+}
+
+/// Return a kernel binary that sets up a programmable interval timer and
+/// `SRET`s into a tiny user program that just spins. A timer handler prints
+/// 'T' and `IRET`s back; after three ticks the machine halts.
+pub fn kernel_timer() -> Vec<u8> {
+    let load_addr = 0x400000_u64;
+    let mut a = Asm::new();
+    let string_idx = build_common(&mut a);
+
+    // User program: JMP 0 (infinite loop). It is one 64-bit word at the
+    // tail of the binary, to be copied into a user page at 0x800000.
+    let user_code: Vec<u8> = encode(0x0D, 0, 0, 0, 0).to_le_bytes().to_vec();
+
+    a.label("after_paging");
+
+    // Install the timer interrupt vector at 0x2020.
+    a.li(1, "timer_handler");
+    a.emit(encode(0x0A, 0, 0, 1, 0x2020));      // store64 [0x2020], x1
+
+    // Initialize a tick counter in the allocator's metadata area.
+    a.emit(encode(0x0A, 0, 0, 0, 0x700010));    // store64 [0x700010], x0
+
+    // Set the timer interval (100 steps) and start it.
+    a.emit(encode(0x01, 1, 0, 0, 100));
+    a.emit(encode(0x12, 0, 1, 0, CSR_TIMER as i64)); // wrcsr TIMER, x1
+
+    // Allocate a new PT for the 8-10 MiB region (PD index 4).
+    a.li(15, "after_pt4");
+    a.jmp("alloc_page");
+
+    a.label("after_pt4");
+    a.emit(encode(0x02, 8, 2, 0, 0));           // x8 = PT4 PA
+
+    // Allocate the user code page.
+    a.li(15, "after_user_page");
+    a.jmp("alloc_page");
+
+    a.label("after_user_page");
+    a.emit(encode(0x02, 7, 2, 0, 0));           // x7 = user code PA
+
+    // Copy the embedded user program into the user code page.
+    a.li(9, "user_code_data");
+    a.emit(encode(0x08, 1, 9, 0, 0));           // load64 x1, [x9]
+    a.emit(encode(0x0A, 0, 7, 1, 0));           // store64 [x7], x1
+
+    // PT4[0] = user code PA | PTE_P | PTE_U
+    a.emit(encode(0x02, 1, 7, 0, 0));           // x1 = user code PA
+    a.emit(encode(0x03, 1, 1, 0, (PTE_P | PTE_U) as i64));
+    a.emit(encode(0x0A, 0, 8, 1, 0));           // store64 [x8], x1
+
+    // PD[4] = PT4 PA | PTE_P | PTE_W
+    a.emit(encode(0x02, 1, 8, 0, 0));           // x1 = PT4 PA
+    a.emit(encode(0x03, 1, 1, 0, (PTE_P | PTE_W) as i64));
+    a.emit(encode(0x0A, 0, 6, 1, 4 * 8));       // store64 [x6 + 4*8], x1
+
+    // Flush the TLB so the new mapping is visible.
+    a.emit(encode(0x13, 0, 0, 0, 0));           // sfence
+
+    // SRET into the user program at 0x800000.
+    a.emit(encode(0x01, 1, 0, 0, 0x800000));    // x1 = user VA
+    a.emit(encode(0x14, 0, 1, 0, 0));           // sret x1
+
+    a.label("done");
+    a.emit(encode(0x00, 0, 0, 0, 0));           // halt (used by the timer)
+
+    a.label("timer_handler");
+    // Increment the tick counter.
+    a.emit(encode(0x08, 1, 0, 0, 0x700010));    // load64 x1, [0x700010]
+    a.emit(encode(0x03, 1, 1, 0, 1));           // addi x1, x1, 1
+    a.emit(encode(0x0A, 0, 0, 1, 0x700010));    // store64 [0x700010], x1
+    // Print 'T'.
+    a.emit(encode(0x01, 2, 0, 0, b'T' as i64)); // x2 = 'T'
+    a.emit(encode(0x09, 0, 0, 2, 0x1000));      // store8 [0x1000], x2
+    // If three ticks, halt; otherwise IRET back to user mode.
+    a.emit(encode(0x01, 2, 0, 0, 3));           // x2 = 3
+    a.beq(1, 2, "done");
+    a.emit(encode(0x16, 0, 0, 0, 0));           // iret
 
     a.label("user_code_data");
 

@@ -11,3 +11,18 @@
 - [x] `run.ps1` still works
 - [x] A user program can trap to the kernel and back
 - [x] Changes are committed, reviewed, and merged
+
+# Mik OS Timer and Interrupts Todo
+
+## Milestone 1.3: Interrupts, Timer, and Preemptive Scheduling
+
+- [x] Task 1: Add emulator timer and `INT`/`IRET` support
+- [x] Task 2: Build `kernel_timer` binary and integration test
+
+## Checkpoint: Timer and Interrupts Work End-to-End
+
+- [x] `cargo test` passes
+- [x] `run.ps1` still works
+- [x] A user program can be interrupted and resume with `IRET`
+- [x] Changes are committed, reviewed, and merged
+- [x] `ROADMAP.md` is updated to show Milestone 1.3 in progress

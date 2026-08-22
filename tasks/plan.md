@@ -84,3 +84,84 @@ Add user/supervisor mode to the Mik-64 emulator and run a tiny user program thro
 ## Open Questions
 
 - Should user-mode `TRAP` use a dedicated `ecall` instruction instead of `TRAP`? (Deferred — `TRAP` works as the system-call entry for now.)
+
+# Implementation Plan: Timer and Interrupts (Milestone 1.3 Slice)
+
+## Overview
+
+Add a programmable interval timer and the `INT`/`IRET` instructions so the kernel can receive periodic timer ticks while running a user program. This is the smallest vertical slice of Milestone 1.3 and leaves the full round-robin scheduler for the next slice.
+
+## Architecture Decisions
+
+- `CSR_TIMER` (CSR 2) stores the interval; writing it reloads both the interval and the down counter.
+- The timer counter decrements once per emulated instruction; when it reaches zero the machine raises a pending interrupt.
+- The timer interrupt vector is fixed at `0x2020`, read from physical memory when the interrupt is taken.
+- `INT` (0x15) and `IRET` (0x16) mirror `TRAP`/`ERET` but use the `0x2020` interrupt vector; `IRET` restores `pc` and `user_mode`.
+- Timer delivery is not re-entrant for the first slice; the kernel is expected to keep the handler short and the interval long enough to avoid nested ticks.
+
+## Task List
+
+### Task 1: Emulator timer and `INT`/`IRET`
+
+**Description:** Add `timer_counter`, `timer_interval`, and `pending_interrupt` to `Machine`; handle `WRCSR`/`RDCSR` for `CSR_TIMER`; add `0x15` `INT` and `0x16` `IRET`; and deliver the timer tick through `0x2020`.
+
+**Acceptance criteria:**
+- [x] `Machine` has a programmable down counter and interval.
+- [x] Writing `CSR_TIMER` reloads both counter and interval.
+- [x] Timer expiry sets a pending flag; the next `step` jumps to `mem64[0x2020]` and forces supervisor mode.
+- [x] `INT` jumps to `mem64[0x2020]` and saves `previous_user_mode`.
+- [x] `IRET` sets `pc = epc` and `user_mode = previous_user_mode`.
+- [x] `mik-emu/tests/timer.rs` shows a timer tick, an `INT`/`IRET` round trip, and a `kernel_timer` tick.
+
+**Verification:**
+- `cargo test -p mik-emu --test timer` passes.
+
+**Dependencies:** None.
+
+**Files likely touched:**
+- `mik-emu/src/lib.rs`
+- `mik-emu/tests/timer.rs`
+- `docs/specs/mik-64.md`
+- `docs/specs/mik-64-paging.md`
+
+**Estimated scope:** Small.
+
+### Task 2: Kernel `kernel_timer` binary and test
+
+**Description:** Build a hand-assembled kernel that sets the timer, `SRET`s into a user program, and lets a timer handler print 'T' and `IRET` back; after three ticks the handler halts.
+
+**Acceptance criteria:**
+- [x] `kernel_timer()` is added to `mik-os/src/lib.rs`.
+- [x] The kernel installs a `0x2020` interrupt handler.
+- [x] A user program that `JMP 0` loops until the timer tick fires.
+- [x] The timer handler prints 'T' and `IRET`s; after three ticks the machine halts.
+- [x] `mik-os/tests/timer.rs` verifies output `!TTT` and `exit_code == 0`.
+
+**Verification:**
+- `cargo test -p mik-os --test timer` passes.
+- `cargo test` still passes.
+- `run.ps1` still works.
+
+**Dependencies:** Task 1.
+
+**Files likely touched:**
+- `mik-os/src/lib.rs`
+- `mik-os/tests/timer.rs`
+
+**Estimated scope:** Small.
+
+### Checkpoint: Timer and Interrupts Work End-to-End
+
+- [x] The emulator can deliver a periodic timer tick to a supervisor handler.
+- [x] A user program can run and be interrupted, then resume with `IRET`.
+- [x] All tests pass.
+- [x] Changes are committed, reviewed, and merged.
+- [x] `ROADMAP.md` is updated to show Milestone 1.3 in progress.
+
+## Risks and Mitigations
+
+| Risk | Impact | Mitigation |
+|------|--------|------------|
+| Timer delivery during a previous interrupt corrupts `previous_user_mode` | High | Keep the first test's interval large enough that the handler finishes before the next tick. |
+| Hand-assembly of the `kernel_timer` binary is error-prone | Medium | Reuse the `kernel_user_mode` page-table setup and keep the handler short. |
+| Timer interaction with paging breaks existing tests | Medium | Timer vector is read from physical memory and the handler is identity-mapped. |
