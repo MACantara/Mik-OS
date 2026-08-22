@@ -1,75 +1,86 @@
-# Implementation Plan: Free-List Physical Page Allocator
+# Implementation Plan: User Mode and System Call Round-Trip
 
 ## Overview
 
-Add a singly-linked free list to the Mik-64 kernel's physical page allocator. The free list sits alongside the existing bump allocator so freed pages are reused before new pages are claimed. This is the smallest step toward the memory-management milestone in `ROADMAP.md`.
+Add user/supervisor mode to the Mik-64 emulator and run a tiny user program through a system call. This is the smallest vertical slice of Milestone 1.2 in `ROADMAP.md`.
 
 ## Architecture Decisions
 
-- **Free list head at `0x700008`:** the bump counter stays at `0x700000`, and the new `free_list_head` pointer uses the next 8 bytes. The machine zeroes all memory, so the head starts empty.
-- **First 8 bytes of a freed page hold the next pointer:** this is the classic embedded free-list pattern and needs no extra metadata.
-- **Keep `alloc_page` and `free_page` as `JMPR` subroutines:** they are already used by the kernel and tests, so the calling convention is preserved.
-- **One kernel binary and test file:** add `kernel_freelist()` and `mik-os/tests/freelist.rs`. No other kernel binaries change unless they choose to call `free_page`.
+- **User mode is a `bool` on `Machine`, not a CSR:** it is a pure CPU state that changes on `SRET`, `TRAP`, and `ERET`.
+- **`PTE_U` is bit 2 of a leaf PTE:** present (`PTE_P`), writable (`PTE_W`), and user (`PTE_U`) are the only flags needed for the first test.
+- **Supervisor can access all pages; user can only access `PTE_U` pages:** this matches x86-64's U/S bit without adding SMAP/SMEP complexity.
+- **`SRET` (opcode 0x14) enters user mode:** `pc = regs[rs1]` and `user_mode = true`. It is the counterpart to `TRAP`/`ERET`.
+- **`TRAP` saves the current `user_mode` and forces supervisor; `ERET` restores it:** this gives a clean user → kernel → user round trip.
+- **User program is embedded in the kernel binary:** the kernel writes it to a physical page and maps it at `0x800000` with `PTE_U`. This keeps the first test self-contained.
 
 ## Task List
 
-### Task 1: Implement `free_page` and `alloc_page` free-list logic
+### Task 1: Emulator support for user mode
 
-**Description:** Change `alloc_page` so it pops `free_list_head` if it is non-zero. If the head is zero, fall back to bumping `next_page`. Change `free_page` from a no-op to a real subroutine that pushes a page onto the free list.
+**Description:** Add `user_mode` to `Machine`, add `PTE_U`, enforce it in `translate`, add `SRET`, and make `TRAP`/`ERET` save and restore `user_mode`.
 
 **Acceptance criteria:**
-- [x] `alloc_page` returns the head page when the free list is not empty.
-- [x] `alloc_page` bumps `next_page` when the free list is empty.
-- [x] `free_page` stores the previous head in the first 8 bytes of the freed page and stores the freed page as the new head.
-- [x] Existing `kernel_binary()` and `kernel_pagefault()` still boot and pass their tests.
+- [x] `Machine` has a public `user_mode` flag that starts as `false`.
+- [x] `PTE_U` (bit 2) is defined.
+- [x] `translate` faults with code 5 when a user-mode access reaches a non-`PTE_U` page.
+- [x] `SRET` sets `pc = regs[rs1]` and `user_mode = true`.
+- [x] `TRAP` sets `previous_user_mode = user_mode` and `user_mode = false`.
+- [x] `ERET` sets `pc = epc` and `user_mode = previous_user_mode`.
+- [x] Existing `mik-emu` paging and trap tests still pass.
 
 **Verification:**
-- `cargo test` passes.
-- `run.ps1` prints the expected boot message.
+- `cargo test -p mik-emu` passes.
+- New or updated emulator tests verify user-mode access and the round trip.
 
 **Dependencies:** None.
 
 **Files likely touched:**
-- `mik-os/src/lib.rs`
+- `mik-emu/src/lib.rs`
+- `mik-emu/tests/paging.rs`
+- `mik-emu/tests/trap.rs`
+- `docs/specs/mik-64.md`
 
-**Estimated scope:** Small.
+**Estimated scope:** Medium.
 
-### Task 2: Add `kernel_freelist()` and integration test
+### Task 2: Kernel user-mode binary and integration test
 
-**Description:** Create a new kernel binary that uses `build_common`, frees the demo page after paging is enabled, allocates again, and writes a sentinel to the reused page. Add a test that loads the binary, runs to halt, and verifies the page was reused.
+**Description:** Build a kernel binary that maps a user page at `0x800000`, writes a tiny user program that prints 'U' through `TRAP 1` and then halts with `TRAP 0`, and enters it with `SRET`.
 
 **Acceptance criteria:**
-- [x] `kernel_freelist()` runs to halt without page faults.
-- [x] The second `alloc_page` returns the same physical address as the freed demo page.
-- [x] `next_page` at `0x700000` does not change after the second allocation.
-- [x] `free_list_head` at `0x700008` is zero after the second allocation.
+- [x] `kernel_user_mode()` is added to `mik-os/src/lib.rs`.
+- [x] The kernel builds a page table entry for a user page at `0x800000`.
+- [x] The user program runs in user mode, calls `TRAP 1`, the handler prints 'U', and `ERET` returns to user mode.
+- [x] The user program calls `TRAP 0` and the machine halts with `exit_code` 0.
+- [x] `mik-os/tests/user_mode.rs` verifies the output is `!U` and paging is still enabled.
 
 **Verification:**
-- `cargo test -p mik-os --test freelist` passes.
+- `cargo test -p mik-os --test user_mode` passes.
+- `cargo test` passes.
+- `run.ps1` still works.
 
 **Dependencies:** Task 1.
 
 **Files likely touched:**
 - `mik-os/src/lib.rs`
-- `mik-os/tests/freelist.rs`
+- `mik-os/tests/user_mode.rs`
 
-**Estimated scope:** Small.
+**Estimated scope:** Medium.
 
-### Checkpoint: Free-List Allocator Complete
+### Checkpoint: User Mode Works End-to-End
 
-- [x] `cargo test` passes.
-- [x] `run.ps1` still works.
-- [x] The allocator can allocate, free, and re-allocate a physical page.
-- [x] Code is committed and merged.
+- [x] A user program can execute, trap to the kernel, and trap back.
+- [x] Page-table permissions stop user-mode access to kernel-only pages.
+- [x] All tests pass.
+- [x] Changes are committed, reviewed, and merged.
 
 ## Risks and Mitigations
 
 | Risk | Impact | Mitigation |
 |------|--------|------------|
-| Free-list pointer stored in a page that is later mapped and written | High | Only free pages hold list pointers; once re-allocated the page is user/kernel data. |
-| Freed page tables or MMIO pages end up on the free list | Medium | `free_page` is a low-level primitive; callers must only pass general RAM pages. Add inline comments. |
-| Hand-assembly makes the free-list logic verbose | Low | Keep the subroutines under a dozen instructions and add comments mapping each instruction to its semantics. |
+| `SRET` / `TRAP` / `ERET` mode switch bugs are subtle | High | Write a focused emulator test for the round trip before the kernel test. |
+| Page-table walker changes break existing tests | Medium | Keep the supervisor path identical; only add the `PTE_U` check for `user_mode == true`. |
+| Hand-assembly of the user page is error-prone | Medium | Keep the user program to three instructions and assert the output in the integration test. |
 
 ## Open Questions
 
-- Should `free_page` accept a zero page or silently return? (For now, assume the caller only frees a valid allocated page.)
+- Should user-mode `TRAP` use a dedicated `ecall` instruction instead of `TRAP`? (Deferred — `TRAP` works as the system-call entry for now.)

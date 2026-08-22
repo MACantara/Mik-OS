@@ -119,8 +119,9 @@ Zero-extension is used only for `LOAD8` and `LOAD16` results.
 | `0x11` | `RDCSR` | `rd = CSR[imm & 0xFF]` |
 | `0x12` | `WRCSR` | `CSR[imm & 0xFF] = rs1` |
 | `0x13` | `SFENCE` | Flush the TLB |
+|| `0x14` | `SRET` | `pc = rs1; enter user mode` |
 
-Opcodes `0x14` .. `0xFF` are reserved and cause an illegal-instruction fault
+Opcodes `0x15` .. `0xFF` are reserved and cause an illegal-instruction fault
 in the MVP.
 
 ### 6.2 Detailed semantics
@@ -264,6 +265,8 @@ TRAP imm
 System call / trap.
 
 - `epc = pc` (the address of the instruction following the `TRAP`).
+- `previous_user_mode = user_mode` (saved for `ERET`).
+- `user_mode = false` (switches to supervisor).
 - `x10 = sign-extend(imm)` (the syscall number, passed to the handler).
 - `pc = mem64[0x2000]` (the trap vector at the fixed address `0x2000`).
 
@@ -278,9 +281,24 @@ ERET
 
 Return from a trap or syscall.
 
-`pc = epc`
+- `pc = epc`
+- `user_mode = previous_user_mode`
 
 All register and immediate fields are ignored.
+
+#### `SRET` (0x14)
+
+```
+SRET rs1
+```
+
+Supervisor return to user mode.
+
+- `pc = rs1`
+- `user_mode = true`
+- `previous_user_mode = false`
+
+The `rd`, `rs2`, and `imm` fields are ignored.
 
 #### `JMPR` (0x0F)
 

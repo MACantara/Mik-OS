@@ -45,8 +45,8 @@ Each PTE is a 64-bit word:
 
 - Bit 0 — **P** (Present): entry is valid.
 - Bit 1 — **W** (Writable): writes are allowed.
-- Bit 2 — **U** (User): user-mode code may access. (Privilege is not enforced
-  in the MVP; this bit is informational.)
+- Bit 2 — **U** (User): user-mode code may access. In user mode, any leaf PTE
+  without this bit causes a page fault (code 5). Supervisor mode ignores it.
 - Bit 3 — **A** (Accessed): set by the CPU when the page is read or written.
 - Bit 4 — **D** (Dirty): set by the CPU when the page is written.
 - Bits 5-11 — available to the OS.
@@ -75,6 +75,7 @@ stores go through the page table walker.
 | `0x11` | `RDCSR`   | `RDCSR rd, csr_imm` | `rd = CSR[csr_imm]`                    |
 | `0x12` | `WRCSR`   | `WRCSR rs1, csr_imm`| `CSR[csr_imm] = rs1`                   |
 | `0x13` | `SFENCE`  | `SFENCE`            | Flush the TLB.                         |
+|| `0x14` | `SRET`    | `SRET rs1`          | `pc = rs1`; enter user mode.                         |
 
 `csr_imm` is the 44-bit immediate field, interpreted as the CSR number (only
 the low 8 bits are used).
@@ -92,6 +93,7 @@ When `PMODE = 1` and a virtual address `va` is accessed:
    d. If `pte.P == 0`, raise page fault (code 1 = not present).
    e. If L > 0: `cr3 = pte.PPN << 12` (descend to next table).
    f. If L == 0: this is the leaf PTE. Check permissions:
+      - User mode and `pte.U == 0` → page fault (code 5 = user-mode violation).
       - Write and `pte.W == 0` → page fault (code 2 = write violation).
       - Instruction fetch and `pte.NX == 1` → page fault (code 3 = NX violation).
       - Otherwise: `pa = (pte.PPN << 12) | va[11:0]`.
@@ -115,6 +117,7 @@ Fault codes:
 | 2    | Write violation     |
 | 3    | NX violation        |
 | 4    | Non-canonical address |
+|| 5    | User-mode violation   |
 
 The kernel must install a page-fault handler address at `0x2010` before enabling
 paging.

@@ -36,6 +36,8 @@ pub struct Machine {
     pub mem: Vec<u8>,
     pub halted: bool,
     pub exit_code: u8,
+    pub user_mode: bool,
+    previous_user_mode: bool,
 }
 
 // CSR numbers.
@@ -45,6 +47,7 @@ pub const CSR_PMODE: u64 = 1;
 // PTE bits.
 const PTE_P: u64 = 1 << 0; // Present
 const PTE_W: u64 = 1 << 1; // Writable
+const PTE_U: u64 = 1 << 2; // User (accessible from user mode)
 const PTE_A: u64 = 1 << 3; // Accessed
 const PTE_D: u64 = 1 << 4; // Dirty
 const PTE_NX: u64 = 1 << 63; // No Execute
@@ -74,6 +77,7 @@ struct TlbEntry {
     pte_addr: u64,  // physical address of the leaf PTE (for A/D updates)
     writable: bool, // PTE.W
     nx: bool,       // PTE.NX
+    user: bool,     // PTE.U
 }
 
 const TLB_SIZE: usize = 16;
@@ -87,6 +91,7 @@ impl TlbEntry {
             pte_addr: 0,
             writable: false,
             nx: false,
+            user: false,
         }
     }
 }
@@ -102,6 +107,8 @@ impl Machine {
             mem: vec![0; RAM_SIZE as usize],
             halted: false,
             exit_code: 0,
+            user_mode: false,
+            previous_user_mode: false,
         };
         // x15 is the stack pointer by convention.
         m.regs[15] = RAM_SIZE;
@@ -185,6 +192,9 @@ impl Machine {
         let entry = &self.tlb[tlb_index];
         if entry.valid && entry.vpn == vpn {
             // TLB hit — check permissions from cached flags.
+            if self.user_mode && !entry.user {
+                return Err(PageFault { code: 5, va });
+            }
             if access == Access::Store && !entry.writable {
                 return Err(PageFault { code: 2, va });
             }
@@ -234,6 +244,9 @@ impl Machine {
 
             if level == 0 {
                 // Leaf PTE — check permissions.
+                if self.user_mode && pte & PTE_U == 0 {
+                    return Err(PageFault { code: 5, va });
+                }
                 if access == Access::Store && pte & PTE_W == 0 {
                     return Err(PageFault { code: 2, va });
                 }
@@ -262,6 +275,7 @@ impl Machine {
                     pte_addr,
                     writable: pte & PTE_W != 0,
                     nx: pte & PTE_NX != 0,
+                    user: pte & PTE_U != 0,
                 };
 
                 return Ok((ppn << 12) | offset);
@@ -276,9 +290,12 @@ impl Machine {
     }
 
     /// Deliver a page fault: save the faulting PC, set fault code and VA in
-    /// registers, and jump to the page-fault handler at `mem64[0x2010]`.
+    /// registers, switch to supervisor mode, and jump to the page-fault
+    /// handler at `mem64[0x2010]`.
     fn deliver_page_fault(&mut self, faulting_pc: u64, fault: PageFault) {
         self.epc = faulting_pc;
+        self.previous_user_mode = self.user_mode;
+        self.user_mode = false;
         self.regs[10] = fault.code;
         self.regs[11] = fault.va;
         // Read the handler address from physical memory (always physical).
@@ -424,8 +441,11 @@ impl Machine {
             }
             0x0E => {
                 // TRAP: save return address, set syscall number in x10,
-                // and jump through the trap vector at 0x2000.
+                // switch to supervisor mode, and jump through the trap
+                // vector at 0x2000.
                 self.epc = self.pc;
+                self.previous_user_mode = self.user_mode;
+                self.user_mode = false;
                 self.regs[10] = imm as u64;
                 let vector = self.read64(0x2000)?;
                 self.pc = vector;
@@ -437,6 +457,14 @@ impl Machine {
             0x10 => {
                 // ERET
                 self.pc = self.epc;
+                self.user_mode = self.previous_user_mode;
+            }
+            0x14 => {
+                // SRET: jump to regs[rs1] and enter user mode. This is the
+                // supervisor's way of returning/entering a user process.
+                self.pc = self.regs[rs1];
+                self.previous_user_mode = self.user_mode;
+                self.user_mode = true;
             }
             0x11 => {
                 // RDCSR: rd = CSR[imm]
