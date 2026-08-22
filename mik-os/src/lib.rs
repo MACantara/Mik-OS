@@ -8,6 +8,7 @@ use mik_emu::encode;
 
 const PTE_P: u64 = 1 << 0;
 const PTE_W: u64 = 1 << 1;
+const PTE_U: u64 = 1 << 2;
 
 /// Tiny one-pass assembler with label fixups.
 struct Asm<'a> {
@@ -386,4 +387,70 @@ pub fn kernel_freelist() -> Vec<u8> {
     a.label("done");
 
     finalize(a, load_addr, string_idx, b"\0")
+}
+
+/// Return a kernel binary that maps a user page at 0x800000, copies a tiny
+/// user program (TRAP 1; TRAP 0) into it, and SRETs into it. The kernel sets
+/// x2 = 'U' so the user TRAP 1 prints the character and returns; the second
+/// TRAP halts.
+pub fn kernel_user_mode() -> Vec<u8> {
+    let load_addr = 0x400000_u64;
+    let mut a = Asm::new();
+    let string_idx = build_common(&mut a);
+
+    // User program: TRAP 1 (print x2), then TRAP 0 (halt).
+    let user_code: Vec<u8> = [
+        encode(0x0E, 0, 0, 0, 1).to_le_bytes().to_vec(),
+        encode(0x0E, 0, 0, 0, 0).to_le_bytes().to_vec(),
+    ]
+    .concat();
+
+    a.label("after_paging");
+    // Allocate a new PT for the 8-10 MiB region (PD index 4).
+    a.li(15, "after_pt4");
+    a.jmp("alloc_page");
+
+    a.label("after_pt4");
+    a.emit(encode(0x02, 8, 2, 0, 0));           // x8 = PT4 PA
+
+    // Allocate the user code page.
+    a.li(15, "after_user_page");
+    a.jmp("alloc_page");
+
+    a.label("after_user_page");
+    a.emit(encode(0x02, 7, 2, 0, 0));           // x7 = user code PA
+
+    // Copy the embedded user program into the user code page.
+    // Use x9 as a temporary source pointer (PT2 from build_common is no longer needed).
+    a.li(9, "user_code_data");
+    a.emit(encode(0x08, 1, 9, 0, 0));           // load64 x1, [x9]
+    a.emit(encode(0x0A, 0, 7, 1, 0));           // store64 [x7], x1
+    a.emit(encode(0x08, 1, 9, 0, 8));           // load64 x1, [x9 + 8]
+    a.emit(encode(0x0A, 0, 7, 1, 8));           // store64 [x7 + 8], x1
+
+    // PT4[0] = user code PA | PTE_P | PTE_U
+    a.emit(encode(0x02, 1, 7, 0, 0));           // x1 = user code PA
+    a.emit(encode(0x03, 1, 1, 0, (PTE_P | PTE_U) as i64));
+    a.emit(encode(0x0A, 0, 8, 1, 0));           // store64 [x8], x1
+
+    // PD[4] = PT4 PA | PTE_P | PTE_W (so the walker can descend).
+    // The PD is in x6 from build_common.
+    a.emit(encode(0x02, 1, 8, 0, 0));           // x1 = PT4 PA
+    a.emit(encode(0x03, 1, 1, 0, (PTE_P | PTE_W) as i64));
+    a.emit(encode(0x0A, 0, 6, 1, 4 * 8));       // store64 [x6 + 4*8], x1
+
+    // Flush the TLB so the new mapping is visible.
+    a.emit(encode(0x13, 0, 0, 0, 0));           // sfence
+
+    // Set the syscall argument and SRET into the user program at 0x800000.
+    a.emit(encode(0x01, 2, 0, 0, b'U' as i64)); // x2 = 'U'
+    a.emit(encode(0x01, 1, 0, 0, 0x800000));    // x1 = user VA
+    a.emit(encode(0x14, 0, 1, 0, 0));           // sret x1
+
+    a.label("done");
+    a.emit(encode(0x00, 0, 0, 0, 0));           // halt (fallback)
+
+    a.label("user_code_data");
+
+    finalize(a, load_addr, string_idx, &user_code)
 }

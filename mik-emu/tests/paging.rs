@@ -4,6 +4,7 @@ const PAGE_SIZE: u64 = 4096;
 const PTE_P: u64 = 1 << 0;
 const PTE_W: u64 = 1 << 1;
 const PTE_NX: u64 = 1 << 63;
+const PTE_U: u64 = 1 << 2;
 
 /// Write a 64-bit value to the machine's physical memory.
 fn phys_write64(m: &mut Machine, addr: u64, val: u64) {
@@ -167,6 +168,36 @@ fn translate_sets_accessed_and_dirty_bits() {
     m.translate(va, mik_emu::Access::Store).unwrap();
     let leaf_pte = phys_read64(&m, pt_addr + pt_idx * 8);
     assert!(leaf_pte & (1 << 4) != 0, "Dirty bit should be set after store");
+}
+
+#[test]
+fn translate_user_mode_violation() {
+    let mut m = Machine::new();
+    let va = 0x400000_u64;
+    let pa = 0x400000_u64;
+    // Map a supervisor-only page (no PTE_U).
+    let pml4 = build_identity_map(&mut m, va, pa, PTE_W);
+    m.csrs[CSR_PTBR as usize] = pml4;
+    m.csrs[CSR_PMODE as usize] = 1;
+
+    // Supervisor can still access the page.
+    let load = m.translate(va, mik_emu::Access::Load);
+    assert!(load.is_ok(), "supervisor should access non-user page");
+
+    // User mode cannot.
+    m.user_mode = true;
+    let load = m.translate(va, mik_emu::Access::Load);
+    assert!(load.is_err(), "user should not access non-user page");
+    let fault = load.unwrap_err();
+    assert_eq!(fault.code, 5);
+
+    // Map a user page and try again.
+    let pml4 = build_identity_map(&mut m, va, pa, PTE_W | PTE_U);
+    m.csrs[CSR_PTBR as usize] = pml4;
+    // TLB was filled above; flush to be sure.
+    m.flush_tlb();
+    let load = m.translate(va, mik_emu::Access::Load);
+    assert!(load.is_ok(), "user should access user page");
 }
 
 #[test]
