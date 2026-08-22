@@ -19,16 +19,21 @@ Mik OS currently runs on the Mik-64 virtual machine inside a Rust emulator. The 
 - A tiny text assembler (`mik-asm`) that produces a flat Mik-64 binary from a minimal line-oriented syntax.
 - End-to-end build and run via `cargo test` and `run.ps1`.
 
-The paging/VM, user-mode, timer, and assembler milestones are complete.
-Phase 2 has started: Milestone 2.1 is in progress — a minimal x86-64 long-mode
-kernel boots under QEMU via the PVH direct-boot ABI, sets up a GDT and initial
-page tables, and prints a serial banner.
+Phase 1 milestones are in progress: the free-list allocator, user-mode
+foundation, timer/INT/IRET, and text assembler are working, but demand paging,
+`fork`/`exec`, a round-robin scheduler, and a pseudo file system are still
+pending. Phase 2 has started: Milestone 2.1 is in progress — a minimal x86-64
+long-mode kernel boots under QEMU via the PVH direct-boot ABI, sets up a GDT
+and initial page tables, and prints a serial banner.
 
 ## Phase 1: Mik-64 OS Core (Complete Learning Sandbox)
 
 The first objective is to prove every major OS concept on the safe, inspectable Mik-64 emulator before real hardware complicates things.
 
 ### Milestone 1.1 — Memory Management Beyond Bump Allocation
+
+**Status:** In progress — a physical free-list allocator (`alloc_page` / `free_page`)
+works; per-process page tables, demand paging, and COW are still pending.
 
 **Goal:** Move from a one-way bump allocator to a richer physical and virtual memory manager.
 
@@ -45,6 +50,9 @@ The first objective is to prove every major OS concept on the safe, inspectable 
 - `cargo test` still passes and `run.ps1` still prints the boot message.
 
 ### Milestone 1.2 — User-Mode Processes and System Calls
+
+**Status:** In progress — user/supervisor mode and a two-syscall `TRAP` round-trip
+work; `fork`, `exec`, and a process table are still pending.
 
 **Goal:** Introduce the process abstraction, user mode, and a proper syscall interface.
 
@@ -129,6 +137,8 @@ is still pending.
 
 ### Milestone 2.2 — x86-64 Paging and Memory Management
 
+**Status:** Not started.
+
 **Goal:** Re-implement the Mik-64 memory concepts on real x86-64 page tables.
 
 - Parse the memory map provided by the bootloader or BIOS/UEFI.
@@ -144,6 +154,8 @@ is still pending.
 
 ### Milestone 2.3 — x86-64 Interrupts, Syscalls, and Scheduling
 
+**Status:** Not started.
+
 **Goal:** Port the Mik-64 process model to x86-64.
 
 - Set up the IDT for hardware exceptions and a timer (PIT/HPET/LAPIC).
@@ -158,6 +170,8 @@ is still pending.
 - Two user programs run concurrently and interleave output.
 
 ### Milestone 2.4 — Demand Paging and Fork on x86-64
+
+**Status:** Not started.
 
 **Goal:** Bring over the richer memory features from Mik-64.
 
