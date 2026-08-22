@@ -1,3 +1,4 @@
 [workspace]
-members = ["mik-emu", "mik-os", "mik-asm"]
+members = ["mik-emu", "mik-os", "mik-asm", "mik-os-x86", "mik-os-x86/kernel"]
+default-members = ["mik-emu", "mik-os", "mik-asm", "mik-os-x86"]
 resolver = "2"

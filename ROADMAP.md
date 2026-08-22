@@ -19,9 +19,10 @@ Mik OS currently runs on the Mik-64 virtual machine inside a Rust emulator. The 
 - A tiny text assembler (`mik-asm`) that produces a flat Mik-64 binary from a minimal line-oriented syntax.
 - End-to-end build and run via `cargo test` and `run.ps1`.
 
-The paging/VM, user-mode, and timer milestones are complete. The assembler
-foundation for Milestone 1.4 is done; `exec()` integration and user programs are
-still pending.
+The paging/VM, user-mode, timer, and assembler milestones are complete.
+Phase 2 has started: Milestone 2.1 is in progress — a minimal x86-64 long-mode
+kernel boots under QEMU via the PVH direct-boot ABI, sets up a GDT and initial
+page tables, and prints a serial banner.
 
 ## Phase 1: Mik-64 OS Core (Complete Learning Sandbox)
 
@@ -107,6 +108,10 @@ scheduler pending.
 This phase is the educational bridge from the clean Mik-64 world to the real, quirky x86-64 world.
 
 ### Milestone 2.1 — x86-64 Bootloader and Long Mode
+
+**Status:** In progress — minimal long-mode boot via the PVH direct-boot ABI works
+(GDT, initial page tables, serial output). A custom boot sector / stage1 loader
+is still pending.
 
 **Goal:** Boot a real x86-64 kernel image under QEMU without any borrowed UEFI/GRUB code.
 
