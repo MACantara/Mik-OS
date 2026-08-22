@@ -3,6 +3,13 @@
 version = 4
 
 [[package]]
+name = "mik-asm"
+version = "0.1.0"
+dependencies = [
+ "mik-emu",
+]
+
+[[package]]
 name = "mik-emu"
 version = "0.1.0"
 

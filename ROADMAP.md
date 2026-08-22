@@ -16,11 +16,12 @@ Mik OS currently runs on the Mik-64 virtual machine inside a Rust emulator. The 
 - An identity-mapped kernel page table and a kernel page-fault handler that prints `F<fault_code>`.
 - User/supervisor mode with `SRET`, `PTE_U`, and a user-mode system call round-trip.
 - A programmable interval timer, `INT`/`IRET`, and a user program that receives timer ticks.
+- A tiny text assembler (`mik-asm`) that produces a flat Mik-64 binary from a minimal line-oriented syntax.
 - End-to-end build and run via `cargo test` and `run.ps1`.
 
-The paging/VM and user-mode milestones are complete. The timer/interrupt
-foundation for Milestone 1.3 is done; the next slice is a round-robin scheduler
-that saves and restores process context.
+The paging/VM, user-mode, and timer milestones are complete. The assembler
+foundation for Milestone 1.4 is done; `exec()` integration and user programs are
+still pending.
 
 ## Phase 1: Mik-64 OS Core (Complete Learning Sandbox)
 
@@ -78,6 +79,8 @@ scheduler pending.
 - The scheduler correctly saves and restores `PTBR`/`PMODE` on context switch.
 
 ### Milestone 1.4 — Tiny Mik-64 User Programs and Assembler
+
+**Status:** In progress — text assembler works and produces runnable binaries; `exec` and pseudo file system pending.
 
 **Goal:** Stop hand-assembling and build the smallest possible user-space build chain.
 

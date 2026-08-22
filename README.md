@@ -32,6 +32,7 @@ The `!` is printed from a freshly allocated page; the `?` is printed through a
 | `.\run.ps1` | Build and boot Mik OS in one step |
 | `cargo run -p mik-os -- <path>` | Write the kernel flat binary to `<path>` |
 | `cargo run -p mik-emu -- <path>` | Run a flat binary under the Mik-64 emulator |
+| `cargo run -p mik-asm -- <in.s> <out.bin>` | Assemble a Mik-64 source file to a flat binary |
 
 ## Architecture
 
