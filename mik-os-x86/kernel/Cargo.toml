@@ -1,0 +1,7 @@
+[package]
+name = "mik-os-x86-kernel"
+version = "0.1.0"
+edition = "2021"
+build = "build.rs"
+
+[dependencies]

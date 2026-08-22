@@ -41,3 +41,19 @@
 - [x] `mik-emu <foo.bin>` prints `Hello\n`
 - [x] Changes are committed, reviewed, and merged
 - [x] `ROADMAP.md` is updated to show Milestone 1.4 in progress
+
+
+# Mik OS x86-64 Boot Todo
+
+## Milestone 2.1: x86-64 Bootloader and Long Mode
+
+- [x] Task 1: Install x86_64-unknown-none target and QEMU
+- [x] Task 2: Create mik-os-x86 workspace crate with long-mode boot
+- [x] Task 3: Build and run under QEMU, verify serial banner
+
+## Checkpoint: x86-64 Boots into Long Mode
+
+- [x] cargo build -p mik-os-x86 produces an ELF image
+- [x] cargo run -p mik-os-x86 -- qemu starts QEMU and prints a banner
+- [ ] Changes are committed, reviewed, and merged
+- [ ] ROADMAP.md is updated to show Milestone 2.1 in progress
