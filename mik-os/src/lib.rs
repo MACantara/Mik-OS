@@ -244,12 +244,22 @@ fn build_common<'a>(a: &mut Asm<'a>) -> usize {
     // --- Subroutines ---
 
     a.label("alloc_page");
+    a.emit(encode(0x08, 2, 0, 0, 0x700008));    // load64 x2, [0x700008] (free_list_head)
+    a.beq(2, 0, "alloc_bump");                  // if head == 0, bump next_page
+    a.emit(encode(0x08, 3, 2, 0, 0));           // load64 x3, [x2] (next)
+    a.emit(encode(0x0A, 0, 0, 3, 0x700008));    // store64 [0x700008], x3
+    a.emit(encode(0x0F, 0, 15, 0, 0));          // jmpr x15 (x2 = page)
+
+    a.label("alloc_bump");
     a.emit(encode(0x08, 2, 0, 0, 0x700000));    // load64 x2, [0x700000]
     a.emit(encode(0x03, 3, 2, 0, page_size));
     a.emit(encode(0x0A, 0, 0, 3, 0x700000));    // store64 [0x700000], x3
-    a.emit(encode(0x0F, 0, 15, 0, 0));          // jmpr x15
+    a.emit(encode(0x0F, 0, 15, 0, 0));          // jmpr x15 (x2 = page)
 
     a.label("free_page");
+    a.emit(encode(0x08, 3, 0, 0, 0x700008));    // load64 x3, [0x700008] (old head)
+    a.emit(encode(0x0A, 0, 2, 3, 0));           // store64 [x2], x3 (page->next = old)
+    a.emit(encode(0x0A, 0, 0, 2, 0x700008));    // store64 [0x700008], x2 (head = page)
     a.emit(encode(0x0F, 0, 15, 0, 0));          // jmpr x15
 
     a.label("fill_pt");
@@ -346,6 +356,34 @@ pub fn kernel_pagefault() -> Vec<u8> {
 
     a.label("done");
     a.emit(encode(0x0E, 0, 0, 0, 0));           // trap 0 -> halt
+
+    finalize(a, load_addr, string_idx, b"\0")
+}
+
+/// Return a kernel binary that frees the demo page, allocates it again, and
+/// writes a sentinel to the reused page. Used to test the physical free list.
+pub fn kernel_freelist() -> Vec<u8> {
+    let load_addr = 0x400000_u64;
+    let mut a = Asm::new();
+    let string_idx = build_common(&mut a);
+
+    a.label("after_paging");
+    // Free the demo page, then allocate again and write a sentinel.
+    a.emit(encode(0x02, 2, 14, 0, 0));          // x2 = demo page
+    a.li(15, "after_free");
+    a.jmp("free_page");
+
+    a.label("after_free");
+    a.li(15, "after_realloc");
+    a.jmp("alloc_page");
+
+    a.label("after_realloc");
+    // x2 = reused page (should be the demo page 0x701000).
+    a.emit(encode(0x01, 3, 0, 0, 0xCAFEBABE));  // sentinel
+    a.emit(encode(0x0A, 0, 2, 3, 0));           // store64 [x2], x3
+    a.emit(encode(0x0E, 0, 0, 0, 0));           // trap 0 -> halt
+
+    a.label("done");
 
     finalize(a, load_addr, string_idx, b"\0")
 }

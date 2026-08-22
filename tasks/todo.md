@@ -1,25 +1,13 @@
-# Mik OS Paging Todo
+# Mik OS Free-List Allocator Todo
 
-## Phase 1: Emulator — CSR Instructions and Page Table Walker
+## Milestone 1.1: Memory Management Beyond Bump Allocation
 
-- [x] Task 7: Add CSR instructions (RDCSR/WRCSR/SFENCE) to the emulator
-- [x] Task 8: Implement the 4-level page table walker
-- [x] Task 9: Add the direct-mapped TLB
-- [x] Task 10: Wire paging into memory accesses and add page-fault delivery
+- [ ] Task 1: Implement `free_page` and `alloc_page` free-list logic
+- [ ] Task 2: Add `kernel_freelist()` and integration test
 
-## Checkpoint: Emulator Paging Complete
+## Checkpoint: Free-List Allocator Complete
 
-- [x] All emulator paging tests pass
-- [x] Flat-memory tests still pass
-
-## Phase 2: Kernel — Enable Paging
-
-- [x] Task 11: Kernel sets up an identity map and enables paging
-- [x] Task 12: Kernel handles a page fault
-
-## Checkpoint: Paging MVP Complete
-
-- [x] Kernel boots with paging enabled
-- [x] Page faults are handled
-- [x] All tests pass
-- [x] `.\run.ps1` works end-to-end
+- [ ] `cargo test` passes
+- [ ] `run.ps1` still works
+- [ ] Freed page is re-allocated and reused
+- [ ] Changes are committed, reviewed, and merged
