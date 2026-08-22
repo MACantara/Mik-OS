@@ -18,10 +18,10 @@ Add a singly-linked free list to the Mik-64 kernel's physical page allocator. Th
 **Description:** Change `alloc_page` so it pops `free_list_head` if it is non-zero. If the head is zero, fall back to bumping `next_page`. Change `free_page` from a no-op to a real subroutine that pushes a page onto the free list.
 
 **Acceptance criteria:**
-- `alloc_page` returns the head page when the free list is not empty.
-- `alloc_page` bumps `next_page` when the free list is empty.
-- `free_page` stores the previous head in the first 8 bytes of the freed page and stores the freed page as the new head.
-- Existing `kernel_binary()` and `kernel_pagefault()` still boot and pass their tests.
+- [x] `alloc_page` returns the head page when the free list is not empty.
+- [x] `alloc_page` bumps `next_page` when the free list is empty.
+- [x] `free_page` stores the previous head in the first 8 bytes of the freed page and stores the freed page as the new head.
+- [x] Existing `kernel_binary()` and `kernel_pagefault()` still boot and pass their tests.
 
 **Verification:**
 - `cargo test` passes.
@@ -39,10 +39,10 @@ Add a singly-linked free list to the Mik-64 kernel's physical page allocator. Th
 **Description:** Create a new kernel binary that uses `build_common`, frees the demo page after paging is enabled, allocates again, and writes a sentinel to the reused page. Add a test that loads the binary, runs to halt, and verifies the page was reused.
 
 **Acceptance criteria:**
-- `kernel_freelist()` runs to halt without page faults.
-- The second `alloc_page` returns the same physical address as the freed demo page.
-- `next_page` at `0x700000` does not change after the second allocation.
-- `free_list_head` at `0x700008` is zero after the second allocation.
+- [x] `kernel_freelist()` runs to halt without page faults.
+- [x] The second `alloc_page` returns the same physical address as the freed demo page.
+- [x] `next_page` at `0x700000` does not change after the second allocation.
+- [x] `free_list_head` at `0x700008` is zero after the second allocation.
 
 **Verification:**
 - `cargo test -p mik-os --test freelist` passes.
@@ -57,10 +57,10 @@ Add a singly-linked free list to the Mik-64 kernel's physical page allocator. Th
 
 ### Checkpoint: Free-List Allocator Complete
 
-- [ ] `cargo test` passes.
-- [ ] `run.ps1` still works.
-- [ ] The allocator can allocate, free, and re-allocate a physical page.
-- [ ] Code is committed and merged via a pull request.
+- [x] `cargo test` passes.
+- [x] `run.ps1` still works.
+- [x] The allocator can allocate, free, and re-allocate a physical page.
+- [x] Code is committed and merged.
 
 ## Risks and Mitigations
 
