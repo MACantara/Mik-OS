@@ -10,7 +10,7 @@ Add user/supervisor mode to the Mik-64 emulator and run a tiny user program thro
 - **`PTE_U` is bit 2 of a leaf PTE:** present (`PTE_P`), writable (`PTE_W`), and user (`PTE_U`) are the only flags needed for the first test.
 - **Supervisor can access all pages; user can only access `PTE_U` pages:** this matches x86-64's U/S bit without adding SMAP/SMEP complexity.
 - **`SRET` (opcode 0x14) enters user mode:** `pc = regs[rs1]` and `user_mode = true`. It is the counterpart to `TRAP`/`ERET`.
-- **`TRAP` saves the current `user_mode` and forces supervisor; `ERET` restores it:** this gives a clean user → kernel → user round trip.
+- **`TRAP` saves the current `user_mode` and forces supervisor; `ERET` restores it:** this gives a clean user -> kernel -> user round trip.
 - **User program is embedded in the kernel binary:** the kernel writes it to a physical page and maps it at `0x800000` with `PTE_U`. This keeps the first test self-contained.
 
 ## Task List
@@ -83,7 +83,7 @@ Add user/supervisor mode to the Mik-64 emulator and run a tiny user program thro
 
 ## Open Questions
 
-- Should user-mode `TRAP` use a dedicated `ecall` instruction instead of `TRAP`? (Deferred — `TRAP` works as the system-call entry for now.)
+- Should user-mode `TRAP` use a dedicated `ecall` instruction instead of `TRAP`? (Deferred -- `TRAP` works as the system-call entry for now.)
 
 # Implementation Plan: Timer and Interrupts (Milestone 1.3 Slice)
 
@@ -165,3 +165,79 @@ Add a programmable interval timer and the `INT`/`IRET` instructions so the kerne
 | Timer delivery during a previous interrupt corrupts `previous_user_mode` | High | Keep the first test's interval large enough that the handler finishes before the next tick. |
 | Hand-assembly of the `kernel_timer` binary is error-prone | Medium | Reuse the `kernel_user_mode` page-table setup and keep the handler short. |
 | Timer interaction with paging breaks existing tests | Medium | Timer vector is read from physical memory and the handler is identity-mapped. |
+
+# Implementation Plan: Tiny Mik-64 Assembler (Milestone 1.4 Slice)
+
+## Overview
+
+Add a tiny text-to-binary assembler for Mik-64 so user programs can be written in a minimal line-oriented syntax instead of hand-encoded words. This slice covers the assembler tool and a single `Hello` user program test; `exec()` and a pseudo file system are deferred.
+
+## Architecture Decisions
+
+- The assembler lives in a new `mik-asm` workspace crate so it can be built and run as `mik-asm <in.s> <out.bin>`.
+- Syntax is line-oriented, space/comma separated tokens, `#` line comments, `label:` definitions, and a `.string` directive.
+- Two-pass assembly: first pass collects instructions and data items; second pass resolves labels and emits a flat binary with code followed by data.
+- Only the instructions needed for the first test are required, but all 23 Mik-64 opcodes are mapped for completeness.
+- The `Hello` program uses the memory-mapped serial port directly and `HALT`; it does not rely on a `TRAP` handler, keeping the test self-contained.
+
+## Task List
+
+### Task 1: Create the `mik-asm` crate and parser
+
+**Description:** Add `mik-asm` to the workspace with a library `assemble(src, base)` and a `mik-asm` binary. Support mnemonics, registers, immediate literals, labels, and `.string`.
+
+**Acceptance criteria:**
+- [x] `mik-asm/Cargo.toml` exists and `mik-asm` is in the workspace members.
+- [x] `mik-asm/src/lib.rs` parses source and returns a `Vec<u8>` or a clear error.
+- [x] `mik-asm/src/main.rs` reads an input file, assembles it, and writes the output file.
+- [x] All existing Mik-64 opcodes are mapped to mnemonics.
+
+**Verification:**
+- `cargo build -p mik-asm` succeeds.
+- `cargo test -p mik-asm` passes.
+
+**Dependencies:** None.
+
+**Files likely touched:**
+- `Cargo.toml`
+- `mik-asm/Cargo.toml`
+- `mik-asm/src/lib.rs`
+- `mik-asm/src/main.rs`
+
+**Estimated scope:** Medium.
+
+### Task 2: Hello-world user program and integration test
+
+**Description:** Add a `mik-asm/tests/assembler.rs` test with a source that prints `Hello` and halts, then runs it under `mik_emu` and asserts the output.
+
+**Acceptance criteria:**
+- [x] A `.s` source assembles to a binary that prints `Hello\n` (or `Hello\n`).
+- [x] `cargo test -p mik-asm` runs the assembled program and verifies the output.
+- [x] `cargo test` across the workspace still passes.
+- [x] `run.ps1` still works.
+
+**Verification:**
+- `cargo test` passes.
+
+**Dependencies:** Task 1.
+
+**Files likely touched:**
+- `mik-asm/tests/assembler.rs`
+
+**Estimated scope:** Small.
+
+### Checkpoint: Assembler Works End-to-End
+
+- [x] `mik-asm` can be built and run from the command line.
+- [x] A hand-written `.s` file produces a working Mik-64 binary.
+- [x] All tests pass.
+- [x] Changes are committed, reviewed, and merged.
+- [x] `ROADMAP.md` is updated to show Milestone 1.4 in progress.
+
+## Risks and Mitigations
+
+| Risk | Impact | Mitigation |
+|------|--------|------------|
+| Two-pass label resolution has off-by-one errors in branch offsets | High | Keep the test simple with only a few labels and assert exact output. |
+| New crate workspace integration breaks existing builds | Medium | Build the full workspace and run all tests after adding `mik-asm`. |
+| Over-engineering a full assembler | Medium | Support only the syntax needed for the first test; don't add macros or complex directives. |

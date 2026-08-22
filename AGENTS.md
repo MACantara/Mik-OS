@@ -53,6 +53,9 @@ mik-emu/
 mik-os/
   src/lib.rs                # Hand-assembled Mik-64 kernel
   src/main.rs               # Binary builder
+mik-asm/
+  src/lib.rs                # Text-to-binary Mik-64 assembler
+  src/main.rs               # mik-asm <in.s> <out.bin>
   tests/kernel_boot.rs      # Boot output test
   tests/kernel_paging.rs    # Paging enablement test
   tests/pagefault.rs        # Kernel page-fault handler test
