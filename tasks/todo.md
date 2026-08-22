@@ -55,5 +55,5 @@
 
 - [x] cargo build -p mik-os-x86 produces an ELF image
 - [x] cargo run -p mik-os-x86 -- qemu starts QEMU and prints a banner
-- [ ] Changes are committed, reviewed, and merged
-- [ ] ROADMAP.md is updated to show Milestone 2.1 in progress
+- [x] Changes are committed, reviewed, and merged
+- [x] ROADMAP.md is updated to show Milestone 2.1 in progress
