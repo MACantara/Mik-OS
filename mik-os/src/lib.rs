@@ -106,15 +106,14 @@ impl<'a> Asm<'a> {
     }
 }
 
-/// Return the flat Mik-64 kernel binary for the MVP.
-pub fn kernel_binary() -> Vec<u8> {
-    let load_addr = 0x400000_u64;
+/// Common kernel bootstrap: flat setup, identity page tables, and enable paging.
+/// Returns the index of the `print_string` string LI that the caller must patch
+/// and then append a string.
+fn build_common<'a>(a: &mut Asm<'a>) -> usize {
     let page_size: i64 = 0x1000;
     let pte_size: i64 = 8;
     let ptes: i64 = 512;
     let flags = (PTE_P | PTE_W) as i64;
-
-    let mut a = Asm::new();
 
     // Register plan for the kernel:
     // x0  : hard-wired zero
@@ -240,21 +239,7 @@ pub fn kernel_binary() -> Vec<u8> {
     a.emit(encode(0x12, 0, 1, 0, 0));           // wrcsr PTBR, x1
     a.emit(encode(0x01, 1, 0, 0, 1));
     a.emit(encode(0x12, 0, 1, 0, 1));           // wrcsr PMODE, x1
-
-    // free the demo page (no-op) and continue
-    a.emit(encode(0x02, 2, 14, 0, 0));          // x2 = demo page
-    a.li(15, "after_free");
-    a.jmp("free_page");
-
-    a.label("after_free");
-    a.emit(encode(0x01, 2, 0, 0, b'?' as i64));
-    a.emit(encode(0x0E, 0, 0, 0, 1));           // trap 1 -> print '?'
-
-    // print "Mik OS\n"
-    a.jmp("print_string");
-
-    a.label("done");
-    a.emit(encode(0x0E, 0, 0, 0, 0));           // trap 0 -> halt
+    a.jmp("after_paging");                      // skip subroutines, caller defines this
 
     // --- Subroutines ---
 
@@ -304,12 +289,63 @@ pub fn kernel_binary() -> Vec<u8> {
     a.emit(encode(0x00, 0, 0, 0, 0));           // halt
 
     a.label("pf_handler");
-    a.emit(encode(0x00, 0, 0, 0, 0));           // halt (Task 12 expands this)
+    // Print "F" followed by the fault code digit, then halt.
+    a.emit(encode(0x01, 1, 0, 0, b'F' as i64)); // 'F'
+    a.emit(encode(0x09, 0, 0, 1, 0x1000));      // store8 [0x1000], x1
+    a.emit(encode(0x03, 1, 10, 0, b'0' as i64)); // x1 = '0' + x10
+    a.emit(encode(0x09, 0, 0, 1, 0x1000));      // store8 [0x1000], x1
+    a.emit(encode(0x00, 0, 0, 0, 0));           // halt
 
+    string_idx
+}
+
+/// Finalize the assembler, patch the `print_string` string address, and emit the
+/// raw binary with the provided trailing string.
+fn finalize(mut a: Asm, load_addr: u64, string_idx: usize, string: &[u8]) -> Vec<u8> {
     a.resolve(load_addr);
-
     let string_addr = load_addr + (a.len() as u64) * 8;
     a.patch_imm(string_idx, string_addr as i64);
+    a.binary(string)
+}
 
-    a.binary(b"Mik OS\n\0")
+/// Return the flat Mik-64 kernel binary for the MVP.
+pub fn kernel_binary() -> Vec<u8> {
+    let load_addr = 0x400000_u64;
+    let mut a = Asm::new();
+    let string_idx = build_common(&mut a);
+
+    a.label("after_paging");
+    // free the demo page (no-op) and continue
+    a.emit(encode(0x02, 2, 14, 0, 0));          // x2 = demo page
+    a.li(15, "after_free");
+    a.jmp("free_page");
+
+    a.label("after_free");
+    a.emit(encode(0x01, 2, 0, 0, b'?' as i64));
+    a.emit(encode(0x0E, 0, 0, 0, 1));           // trap 1 -> print '?'
+
+    // print "Mik OS\n"
+    a.jmp("print_string");
+
+    a.label("done");
+    a.emit(encode(0x0E, 0, 0, 0, 0));           // trap 0 -> halt
+
+    finalize(a, load_addr, string_idx, b"Mik OS\n\0")
+}
+
+/// Return a kernel binary that enables paging and then deliberately touches an
+/// unmapped virtual address to exercise the kernel page-fault handler.
+pub fn kernel_pagefault() -> Vec<u8> {
+    let load_addr = 0x400000_u64;
+    let mut a = Asm::new();
+    let string_idx = build_common(&mut a);
+
+    a.label("after_paging");
+    // Touch an unmapped page (1 GiB) to trigger a not-present page fault.
+    a.emit(encode(0x08, 1, 0, 0, 0x400_0000));  // load64 x1, [0x4000000]
+
+    a.label("done");
+    a.emit(encode(0x0E, 0, 0, 0, 0));           // trap 0 -> halt
+
+    finalize(a, load_addr, string_idx, b"\0")
 }
