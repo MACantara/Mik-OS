@@ -63,6 +63,7 @@ the PPN is the physical address of the next table, and the NX bit is ignored.
 |------------|--------|--------------------------------------------|
 | 0          | `PTBR` | Physical address of the PML4 root table. Must be page-aligned. |
 | 1          | `PMODE`| Paging enable. 0 = disabled (flat mode), 1 = enabled. |
+| 2          | `TIMER`| Timer interval in emulator steps. Writing it reloads the down counter. |
 
 When `PMODE = 0`, all memory accesses use physical addresses directly (the
 current behavior). When `PMODE = 1`, all instruction fetches and data loads/
@@ -75,6 +76,9 @@ stores go through the page table walker.
 | `0x11` | `RDCSR`   | `RDCSR rd, csr_imm` | `rd = CSR[csr_imm]`                    |
 | `0x12` | `WRCSR`   | `WRCSR rs1, csr_imm`| `CSR[csr_imm] = rs1`                   |
 | `0x13` | `SFENCE`  | `SFENCE`            | Flush the TLB.                         |
+| `0x14` | `SRET`    | `SRET rs1`          | `pc = rs1`; enter user mode.           |
+| `0x15` | `INT`     | `INT imm`           | `epc = pc`; `pc = mem64[0x2020]`; `x10 = imm`. |
+| `0x16` | `IRET`    | `IRET`              | `pc = epc`; restore `user_mode`.       |
 || `0x14` | `SRET`    | `SRET rs1`          | `pc = rs1`; enter user mode.                         |
 
 `csr_imm` is the 44-bit immediate field, interpreted as the CSR number (only

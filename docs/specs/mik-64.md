@@ -60,7 +60,11 @@ The default machine has 128 MiB of RAM:
 0x0000_1001                 : serial status port
 0x0000_1002 .. 0x0000_1FFF  : reserved
 0x0000_2000                 : trap vector (holds the 64-bit handler address)
-0x0000_2008 .. 0x003F_FFFF  : reserved
+0x0000_2008 .. 0x0000_200F  : reserved
+0x0000_2010                 : page-fault vector
+0x0000_2018 .. 0x0000_201F  : reserved
+0x0000_2020                 : timer / interrupt vector
+0x0000_2028 .. 0x003F_FFFF  : reserved
 0x0040_0000 .. 0x7FFF_FFFF  : general RAM (126 MiB)
 0x8000_0000                 : initial stack pointer (top of RAM)
 ```
@@ -120,8 +124,10 @@ Zero-extension is used only for `LOAD8` and `LOAD16` results.
 | `0x12` | `WRCSR` | `CSR[imm & 0xFF] = rs1` |
 | `0x13` | `SFENCE` | Flush the TLB |
 || `0x14` | `SRET` | `pc = rs1; enter user mode` |
+|| `0x15` | `INT` | `epc = pc; pc = mem64[0x2020]; x10 = imm` |
+|| `0x16` | `IRET` | `pc = epc; user_mode = previous_user_mode` |
 
-Opcodes `0x15` .. `0xFF` are reserved and cause an illegal-instruction fault
+Opcodes `0x17` .. `0xFF` are reserved and cause an illegal-instruction fault
 in the MVP.
 
 ### 6.2 Detailed semantics
@@ -300,6 +306,33 @@ Supervisor return to user mode.
 
 The `rd`, `rs2`, and `imm` fields are ignored.
 
+#### `INT` (0x15)
+
+```
+INT imm
+```
+
+Software interrupt.
+
+- `epc = pc` (the address of the instruction following the `INT`).
+- `previous_user_mode = user_mode` (saved for `IRET`).
+- `user_mode = false` (switches to supervisor).
+- `x10 = sign-extend(imm)` (the interrupt number, passed to the handler).
+- `pc = mem64[0x2020]` (the interrupt vector at the fixed address `0x2020`).
+
+#### `IRET` (0x16)
+
+```
+IRET
+```
+
+Return from an interrupt.
+
+- `pc = epc`
+- `user_mode = previous_user_mode`
+
+All register and immediate fields are ignored.
+
 #### `JMPR` (0x0F)
 
 ```
@@ -357,7 +390,9 @@ The CSR file has 256 64-bit entries, accessed via `RDCSR` and `WRCSR`.
 | 0          | `PTBR` | Page table base register. Physical address of the PML4 root table. Must be page-aligned. |
 | 1          | `PMODE`| Paging mode. 0 = disabled (flat physical), 1 = enabled (virtual addresses translated). |
 
-CSRs 2..255 are reserved for future use. See `docs/specs/mik-64-paging.md` for
+|| 2          | `TIMER`| Timer interval (in emulator steps). Writing it reloads and starts the down counter. |
+
+CSRs 3..255 are reserved for future use. See `docs/specs/mik-64-paging.md` for
 the full paging specification.
 
 ## 7. Boot protocol
@@ -401,6 +436,11 @@ The `TRAP` instruction is the system-call mechanism. It stores the return
 address in the internal `epc` register, writes the syscall number to `x10`, and
 jumps to the address stored at the trap vector `0x2000`. `ERET` returns to
 `epc`.
+
+The `INT` instruction is a software interrupt: it stores the return address in
+`epc`, writes the interrupt number to `x10`, and jumps to the address stored at
+the interrupt vector `0x2020`. `IRET` returns to `epc`. Timer expiry also uses
+the `0x2020` vector.
 
 Page faults jump to the address stored at `0x2010`. The fault code is placed in
 `x10` and the faulting virtual address in `x11`. See `docs/specs/mik-64-paging.md`

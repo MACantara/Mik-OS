@@ -14,9 +14,13 @@ Mik OS currently runs on the Mik-64 virtual machine inside a Rust emulator. The 
 - A bump page allocator tracking the next free 4 KiB page at `0x700000`.
 - Four-level paging with 4 KiB pages, a 16-entry direct-mapped TLB, and CSR-style `PTBR` / `PMODE` controls.
 - An identity-mapped kernel page table and a kernel page-fault handler that prints `F<fault_code>`.
+- User/supervisor mode with `SRET`, `PTE_U`, and a user-mode system call round-trip.
+- A programmable interval timer, `INT`/`IRET`, and a user program that receives timer ticks.
 - End-to-end build and run via `cargo test` and `run.ps1`.
 
-The paging/VM milestone is complete. The next work falls into two major tracks: advancing the Mik-64 kernel toward a real OS, and preparing the x86-64 port.
+The paging/VM and user-mode milestones are complete. The timer/interrupt
+foundation for Milestone 1.3 is done; the next slice is a round-robin scheduler
+that saves and restores process context.
 
 ## Phase 1: Mik-64 OS Core (Complete Learning Sandbox)
 
@@ -56,6 +60,9 @@ The first objective is to prove every major OS concept on the safe, inspectable 
 - An integration test verifies a parent/child output sequence.
 
 ### Milestone 1.3 — Interrupts, Timer, and Preemptive Scheduling
+
+**Status:** In progress — timer and `INT`/`IRET` foundation complete; round-robin
+scheduler pending.
 
 **Goal:** Replace the cooperative `TRAP` model with true interrupts and a preemptive scheduler.
 

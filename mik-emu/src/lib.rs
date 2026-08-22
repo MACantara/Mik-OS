@@ -38,11 +38,19 @@ pub struct Machine {
     pub exit_code: u8,
     pub user_mode: bool,
     previous_user_mode: bool,
+    // Simple interval timer: when the down counter reaches zero a timer
+    // interrupt is delivered to the handler at mem64[0x2020] on the next step.
+    // ponytail: a real platform would use a separate device/APIC and a proper
+    // interrupt mask/priority system; this is a single-timer-only first slice.
+    timer_interval: u64,
+    timer_counter: u64,
+    pending_interrupt: bool,
 }
 
 // CSR numbers.
 pub const CSR_PTBR: u64 = 0;
 pub const CSR_PMODE: u64 = 1;
+pub const CSR_TIMER: u64 = 2; // timer interval (when written, reloads the down counter)
 
 // PTE bits.
 const PTE_P: u64 = 1 << 0; // Present
@@ -109,6 +117,9 @@ impl Machine {
             exit_code: 0,
             user_mode: false,
             previous_user_mode: false,
+            timer_interval: 0,
+            timer_counter: 0,
+            pending_interrupt: false,
         };
         // x15 is the stack pointer by convention.
         m.regs[15] = RAM_SIZE;
@@ -289,6 +300,18 @@ impl Machine {
         unreachable!();
     }
 
+    /// Deliver an interrupt: save the return PC, switch to supervisor mode,
+    /// and jump to the interrupt handler at `mem64[0x2020]`.
+    fn deliver_interrupt(&mut self, faulting_pc: u64) {
+        self.epc = faulting_pc;
+        self.previous_user_mode = self.user_mode;
+        self.user_mode = false;
+        let handler = u64::from_le_bytes(
+            self.mem[0x2020..0x2028].try_into().unwrap(),
+        );
+        self.pc = handler;
+    }
+
     /// Deliver a page fault: save the faulting PC, set fault code and VA in
     /// registers, switch to supervisor mode, and jump to the page-fault
     /// handler at `mem64[0x2010]`.
@@ -306,6 +329,15 @@ impl Machine {
     }
 
     pub fn step<W: Write>(&mut self, out: &mut W) -> Result<(), String> {
+        // If a timer interrupt is pending, deliver it before executing the
+        // current instruction. This is the only interrupt source in the first
+        // slice (see ponytail note above).
+        if self.pending_interrupt {
+            self.pending_interrupt = false;
+            self.deliver_interrupt(self.pc);
+            return Ok(());
+        }
+
         let base = self.pc;
 
         // Translate the PC for instruction fetch.
@@ -459,6 +491,20 @@ impl Machine {
                 self.pc = self.epc;
                 self.user_mode = self.previous_user_mode;
             }
+            0x15 => {
+                // INT: software interrupt. x10 = imm, pc = mem64[0x2020].
+                self.epc = self.pc;
+                self.previous_user_mode = self.user_mode;
+                self.user_mode = false;
+                self.regs[10] = imm as u64;
+                let vector = self.read64(0x2020)?;
+                self.pc = vector;
+            }
+            0x16 => {
+                // IRET: return from an interrupt.
+                self.pc = self.epc;
+                self.user_mode = self.previous_user_mode;
+            }
             0x14 => {
                 // SRET: jump to regs[rs1] and enter user mode. This is the
                 // supervisor's way of returning/entering a user process.
@@ -469,12 +515,22 @@ impl Machine {
             0x11 => {
                 // RDCSR: rd = CSR[imm]
                 let csr = (imm as u64) as usize & 0xFF;
-                self.regs[rd] = self.csrs[csr];
+                self.regs[rd] = if csr == CSR_TIMER as usize {
+                    self.timer_counter
+                } else {
+                    self.csrs[csr]
+                };
             }
             0x12 => {
                 // WRCSR: CSR[imm] = rs1
                 let csr = (imm as u64) as usize & 0xFF;
-                self.csrs[csr] = self.regs[rs1];
+                let value = self.regs[rs1];
+                self.csrs[csr] = value;
+                // Writing CSR_TIMER reloads the down counter and interval.
+                if csr == CSR_TIMER as usize {
+                    self.timer_interval = value;
+                    self.timer_counter = value;
+                }
                 // Flush TLB on PTBR or PMODE writes.
                 if csr == CSR_PTBR as usize || csr == CSR_PMODE as usize {
                     self.flush_tlb();
@@ -491,6 +547,18 @@ impl Machine {
 
         // x0 is hard-wired to zero.
         self.regs[0] = 0;
+
+        // ponytail: this is a single fixed-rate timer; no interrupt masking or
+        // priority. The counter only advances while the machine is running.
+        if !self.halted && self.timer_interval > 0 {
+            if self.timer_counter <= 1 {
+                self.pending_interrupt = true;
+                self.timer_counter = self.timer_interval;
+            } else {
+                self.timer_counter -= 1;
+            }
+        }
+
         Ok(())
     }
 }
