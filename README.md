@@ -61,6 +61,7 @@ The full architecture and design rationale are in [`docs/architecture.md`](docs/
 ## Project Layout
 
 ```
+ROADMAP.md                 # Long-term plan and milestones
 docs/
   ideas/
     mik-os-vm-first.md     # Why and how we chose the VM-first approach
@@ -77,7 +78,9 @@ mik-emu/
 mik-os/
   src/lib.rs               # Hand-assembled Mik-64 kernel
   src/main.rs              # Binary builder
-  tests/kernel_boot.rs     # Kernel integration test
+  tests/kernel_boot.rs     # Boot output test
+  tests/kernel_paging.rs   # Paging enablement test
+  tests/pagefault.rs       # Page-fault handler test
 run.ps1                    # One-command build and run
 tasks/
   plan.md                  # Implementation plan
@@ -86,22 +89,18 @@ tasks/
 
 ## Status
 
-MVP complete. The emulator boots a hand-assembled Mik-64 kernel that:
+Mik-64 MVP complete. The emulator boots a hand-assembled Mik-64 kernel that:
 
 - allocates physical memory with a bump allocator,
-- sets up a trap vector at `0x2000`,
+- sets up a trap vector at `0x2000` and a page-fault vector at `0x2010`,
 - handles `print_char` (syscall 1) and `halt` (syscall 0),
-- prints to memory-mapped serial at `0x1000`.
+- prints to memory-mapped serial at `0x1000`,
+- builds 4-level identity-mapped page tables, sets `PTBR`, and enables `PMODE`,
+- catches unmapped accesses with a diagnostic page-fault handler.
 
 ## Next Steps
 
-See [`tasks/plan.md`](tasks/plan.md). The most likely future directions are:
-
-1. **Paging / virtual memory** for the Mik-64 emulator.
-2. **Real x86-64 port** of Mik OS under QEMU, written in Rust for the actual
-   target.
-3. A tiny Mik-64 assembler so the kernel can be written in assembly rather than
-   `mik_emu::encode` calls.
+See [`ROADMAP.md`](ROADMAP.md) for the full plan. The immediate next work after the paging milestone is advancing the Mik-64 kernel toward a real OS (memory management, user mode, scheduling) and, eventually, an x86-64 port under QEMU.
 
 ## License
 
