@@ -88,3 +88,49 @@ pub unsafe fn extend_identity_map() {
     }
     core::arch::asm!("mov cr3, {}", in(reg) core::ptr::addr_of!(pml4) as u64);
 }
+
+/// Physical address of the kernel PML4 (identity map). Equals its virtual
+/// address because the identity map is 1:1.
+pub fn kernel_pml4() -> u64 {
+    unsafe { core::ptr::addr_of!(pml4) as u64 }
+}
+
+/// Load `p4` (physical address of a PML4) into CR3 — the x86-64 context
+/// switch for address spaces. Also flushes the TLB (no PCID in use).
+pub unsafe fn switch_cr3(p4: u64) {
+    core::arch::asm!("mov cr3, {}", in(reg) p4);
+}
+
+/// Map `pa` at `va` (both 4 KiB aligned) in the address space rooted at `p4`.
+/// Missing intermediate tables are allocated and zeroed. User pages set
+/// `PTE_U` on the whole chain — every level must carry it for ring 3.
+pub unsafe fn map_4k(p4: *mut u64, va: u64, pa: u64, flags: u64) {
+    let user = flags & PTE_U;
+    let mut table = p4;
+    for shift in [39u32, 30, 21] {
+        let idx = (va >> shift) as usize & 0x1FF;
+        let e = &mut *table.add(idx);
+        if *e & PTE_P == 0 {
+            let next = alloc_frame().expect("out of frames for page tables");
+            core::ptr::write_bytes(next as *mut u8, 0, 4096);
+            *e = next | PTE_P | PTE_W | user;
+        }
+        table = (*e & !0xFFF) as *mut u64;
+    }
+    *table.add((va >> 12) as usize & 0x1FF) = pa | flags;
+}
+
+/// Build a second address space: a fresh PML4 whose PDPT shares the kernel's
+/// identity PD (low 1 GiB — kernel code, stack, and allocator all keep
+/// working after the switch) while PDPT slot 1 points at private user tables
+/// covering 0x40000000..0x80000000. This is the Mik-64 shape on real
+/// hardware: shared kernel mappings, private user region.
+pub unsafe fn build_user_table() -> u64 {
+    let up4 = alloc_frame().expect("out of frames for pml4");
+    let updpt = alloc_frame().expect("out of frames for pdpt");
+    core::ptr::write_bytes(up4 as *mut u8, 0, 4096);
+    core::ptr::write_bytes(updpt as *mut u8, 0, 4096);
+    *(up4 as *mut u64) = updpt | PTE_P | PTE_W;
+    *(updpt as *mut u64) = core::ptr::addr_of!(pd) as u64 | PTE_P | PTE_W;
+    up4
+}
