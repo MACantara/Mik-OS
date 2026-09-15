@@ -3,11 +3,12 @@
 //! The kernel ELF contains three extra payload sections beyond the usual
 //! kernel image: `.boot16` (512-byte boot sector, VMA 0x7C00), `.stage2`
 //! (32-bit loader, VMA 0x7E00), and the kernel proper (PT_LOADs at 0x400000+).
-//! `build_image` extracts them and writes a 128 KiB raw image:
+//! `build_image` extracts them and writes a 1 MiB raw image:
 //!
 //! ```text
 //! sector 0        : .boot16 (kernel_len patched in at offset 0x1F8)
-//! sectors 1..N    : .stage2, then the flat kernel image
+//! sectors 1..255  : .stage2, then the flat kernel image (128 KiB area)
+//! sectors 256+    : Mik-FS superblock, directory, and file data
 //! ```
 
 use std::env;
@@ -15,7 +16,8 @@ use std::path::{Path, PathBuf};
 use std::process::Command;
 
 const KERNEL_VMA: u64 = 0x400000;
-const IMAGE_SIZE: usize = 128 * 1024; // 256 sectors: boot + 255 via 2 INT 13h reads
+const KERNEL_AREA: usize = 128 * 1024; // sectors 0-255: what stage2 loads
+const IMAGE_SIZE: usize = 1024 * 1024; // 1 MiB — sectors 256+ are Mik-FS
 const KLEN_OFFSET: usize = 0x1F8; // patched u32 inside .boot16
 
 fn r16(b: &[u8], off: usize) -> usize {
@@ -104,8 +106,8 @@ pub fn build_image(elf: &[u8]) -> Result<Vec<u8>, String> {
     if stage2.is_empty() {
         return Err(".stage2 is empty".into());
     }
-    if kernel.len() as u64 + 512 + stage2.len() as u64 > IMAGE_SIZE as u64 {
-        return Err("kernel does not fit in the 128 KiB image".into());
+    if kernel.len() as u64 + 512 + stage2.len() as u64 > KERNEL_AREA as u64 {
+        return Err("kernel does not fit in the 128 KiB load area".into());
     }
     boot[KLEN_OFFSET..KLEN_OFFSET + 4]
         .copy_from_slice(&(kernel.len() as u32).to_le_bytes());
