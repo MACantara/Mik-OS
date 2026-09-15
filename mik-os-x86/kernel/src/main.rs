@@ -10,13 +10,18 @@ global_asm!(include_str!("isr.S"));
 global_asm!(include_str!("user.S"));
 
 extern "C" {
-    static user_prog_start: u8;
-    static user_prog_end: u8;
+    static prog_a_start: u8;
+    static prog_a_end: u8;
+    static prog_b_start: u8;
+    static prog_b_end: u8;
 }
 
 mod e820;
 mod idt;
 mod mem;
+mod pic;
+mod sched;
+mod seg;
 mod serial;
 
 #[no_mangle]
@@ -43,37 +48,31 @@ pub extern "C" fn kmain() -> ! {
         let c = mem::alloc_frame().expect("out of frames");
         serial::write_str(if c == a { "alloc/free ok\n" } else { "alloc/free BAD\n" });
 
-        // First user address space: a private PML4 sharing the kernel's
-        // identity PD, with the user blob mapped at 0x40000000 — a VA that is
-        // unmapped under the kernel's own PML4, so running it proves the
-        // second address space is real. Executed from ring 0 for now; ring 3
-        // entry is the M2.3 scheduler milestone.
-        const USER_VA: u64 = 0x4000_0000;
-        let frame = mem::alloc_frame().expect("out of frames for user page");
-        let len = &user_prog_end as *const u8 as usize
-            - &user_prog_start as *const u8 as usize;
-        core::ptr::copy_nonoverlapping(
-            &user_prog_start as *const u8,
-            frame as *mut u8,
-            len,
-        );
-        let up4 = mem::build_user_table();
-        mem::map_4k(up4 as *mut u64, USER_VA, frame, mem::PTE_P | mem::PTE_W | mem::PTE_U);
-        let kcr3 = mem::kernel_pml4();
-        serial::write_str("user page -> ");
-        mem::switch_cr3(up4);
-        core::arch::asm!("call {}", in(reg) USER_VA); // prints 'U'
-        mem::switch_cr3(kcr3);
-        serial::write_str(" <- ran under second CR3\n");
-    }
+        // Ring-3 plumbing: user segments + TSS, PIC remap, PIT timer. Nothing
+        // fires yet — IF stays clear until the first iretq into user mode.
+        seg::init();
+        pic::init_pic();
+        serial::write_str("gdt/tss/pic ok\n");
 
-    unsafe {
-        // Prove the IDT works: int3 delivers vector 3 to the stub, which
-        // prints "EX03" on COM1 and halts. Runs last — it never returns.
-        core::arch::asm!("int3");
-    }
-    loop {
-        unsafe { core::arch::asm!("hlt"); }
+        // Spawn the two user processes and hand the CPU to the scheduler.
+        // Expected serial order is deterministic: 'A' (A's first slice),
+        // 'B' (A yielded), 'a' (timer preempted the never-yielding B),
+        // 'A' (A's last slice), exit — then B spins forever.
+        let prog_a = core::slice::from_raw_parts(
+            &prog_a_start as *const u8,
+            &prog_a_end as *const u8 as usize - &prog_a_start as *const u8 as usize,
+        );
+        let prog_b = core::slice::from_raw_parts(
+            &prog_b_start as *const u8,
+            &prog_b_end as *const u8 as usize - &prog_b_start as *const u8 as usize,
+        );
+        sched::spawn(prog_a);
+        sched::spawn(prog_b);
+        serial::write_str("sched: 2 procs\n");
+        // Arm the tick last: a pending IRQ0 would be delivered the instant the
+        // first iretq sets IF and would preempt before proc A ever runs.
+        pic::init_pit();
+        sched::start();
     }
 }
 

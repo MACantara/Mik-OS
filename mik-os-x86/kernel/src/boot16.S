@@ -5,8 +5,9 @@
 // jumps to stage2's pm_entry.
 //
 // Image format: sector 0 is this sector; sectors 1..N are stage2 immediately
-// followed by the flat kernel. The builder pads the image to 64 KiB, so a
-// fixed 127-sector read is always in bounds.
+// followed by the flat kernel. The builder pads the image to 128 KiB; two
+// INT 13h EDD reads (127 + 128 sectors) load all of it — the second chunk
+// lands at phys 0x17C00 via segment 0x17C0.
 
 .section .boot16, "ax"
 .code16
@@ -23,6 +24,12 @@ boot16_start:
     // INT 13h AH=42h (EDD LBA read): read sectors 1..127 into 0x7E00.
     // DL still holds the boot drive handed to us by the BIOS.
     mov si, offset dap          // ds:si = disk address packet
+    mov ah, 0x42
+    int 0x13
+    jc boot_fail
+
+    // Second chunk: sectors 128..255 (LBA) into phys 0x17C00.
+    mov si, offset dap2
     mov ah, 0x42
     int 0x13
     jc boot_fail
@@ -82,10 +89,18 @@ boot_fail:
 dap:                            // INT 13h AH=42h disk address packet
     .byte 0x10                  // packet size
     .byte 0                     // reserved
-    .word 127                   // sectors to read (image is padded to 64 KiB)
+    .word 127                   // sectors to read (chunk 1 of 2)
     .word 0x7E00                // destination offset
     .word 0x0000                // destination segment
     .quad 1                     // first LBA (sector 0 is this boot sector)
+
+dap2:                           // second chunk continues the blob at 0x17C00
+    .byte 0x10
+    .byte 0
+    .word 128                   // sectors 128..255
+    .word 0x0000
+    .word 0x17C0                // seg 0x17C0 -> phys 0x17C00
+    .quad 128
 
 .align 8
 gdt32:                          // flat 4 GiB code32/data32 for the mode switch

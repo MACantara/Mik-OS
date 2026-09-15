@@ -33,7 +33,10 @@ kernel installs a GDT, a minimal IDT, initial page tables, and prints a
 serial banner. The PVH direct-boot path remains available for comparison.
 Milestone 2.2 is also complete — an E820-fed free-list frame allocator, a
 kernel-owned 1 GiB identity map, and `CR3` switching to a second address
-space that runs a user page.
+space that runs a user page. Milestone 2.3 is complete as well — user-mode
+processes with a GDT/TSS, a PIC-remapped PIT tick at 100 Hz, an `int 0x80`
+syscall gate, and a frame-return round-robin scheduler that interleaves two
+ring-3 programs (`ABaA` on serial).
 
 ## Phase 1: Mik-64 OS Core (Complete Learning Sandbox)
 
@@ -185,7 +188,18 @@ CR3. Verified by `mik-os-x86/tests/boots_in_qemu.rs`.
 
 ### Milestone 2.3 — x86-64 Interrupts, Syscalls, and Scheduling
 
-**Status:** Not started.
+**Status:** Complete — the GDT gained user code/data descriptors and a TSS
+(`seg.rs`); the PIC is remapped to vectors 32–47 with only IRQ0 unmasked and
+the PIT runs at ~100 Hz (`pic.rs`); the 256-entry IDT adds `isr_timer` and
+`isr_syscall` stubs that save 15 GPRs and hand Rust a full `IrqFrame`
+(`isr.S`, `idt.rs`); `int 0x80` (DPL-3 interrupt gate) carries `sys_write`,
+`sys_exit`, and `sys_yield` on `rax`/`rdi`; `sched.rs` holds a two-slot
+process table whose context switch is "return a different frame pointer" —
+`irq_tail` + `iretq` restores `rip`, `cs`, `rflags`, `rsp`, `ss`, and the
+CR3 switch swaps the address space. Boot drains the BIOS-latched PIT tick
+before the first dispatch. Two user programs interleave `ABaA` on serial —
+process B never yields, so every exit from B is a genuine timer preemption.
+Verified by `mik-os-x86/tests/boots_in_qemu.rs` on both BIOS and PVH paths.
 
 **Goal:** Port the Mik-64 process model to x86-64.
 

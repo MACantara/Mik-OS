@@ -1,5 +1,5 @@
-//! Minimal IDT: interrupt-gate entries for the 32 CPU exception vectors,
-//! each pointing at an `isr_N` stub from `isr.S`.
+//! IDT: interrupt-gate entries for the 32 CPU exception vectors, the timer
+//! IRQ (vector 32), and the `int 0x80` syscall gate (vector 128, DPL=3).
 
 #[repr(C, packed)]
 #[derive(Clone, Copy)]
@@ -14,12 +14,12 @@ struct IdtEntry {
 }
 
 impl IdtEntry {
-    const fn new(handler: u64) -> Self {
+    const fn new(handler: u64, flags: u8) -> Self {
         Self {
             offset_lo: handler as u16,
-            selector: 0x08,      // gdt64 code segment from boot.S
+            selector: 0x08,      // kernel code segment
             ist: 0,
-            flags: 0x8E,         // present, DPL 0, 64-bit interrupt gate
+            flags,
             offset_mid: (handler >> 16) as u16,
             offset_hi: (handler >> 32) as u32,
             _reserved: 0,
@@ -35,19 +35,29 @@ struct IdtPtr {
 
 extern "C" {
     static isr_table: [u64; 32];
+    fn isr_timer();
+    fn isr_syscall();
 }
 
-static mut IDT: [IdtEntry; 32] = [IdtEntry::new(0); 32];
+const GATE_INT: u8 = 0x8E; // present, DPL 0, 64-bit interrupt gate
+const GATE_INT_USER: u8 = 0xEE; // present, DPL 3, 64-bit interrupt gate
+const TIMER_VEC: usize = 32; // IRQ0 after PIC remap
+const SYSCALL_VEC: usize = 0x80;
 
-/// Fill the IDT from `isr_table` and load it.
+static mut IDT: [IdtEntry; 256] = [IdtEntry::new(0, 0); 256];
+
+/// Fill the IDT: exception stubs, timer IRQ, and the user-callable syscall
+/// gate, then `lidt`.
 ///
-/// Safety: must run before any exception or interrupt can fire; intended for
-/// one-shot kernel init.
+/// Safety: must run before exceptions, interrupts, or `int 0x80` can fire;
+/// intended for one-shot kernel init.
 pub unsafe fn init() {
     let idt = core::ptr::addr_of_mut!(IDT);
-    for (i, entry) in (*idt).iter_mut().enumerate() {
-        *entry = IdtEntry::new(isr_table[i]);
+    for (i, entry) in (*idt).iter_mut().enumerate().take(32) {
+        *entry = IdtEntry::new(isr_table[i], GATE_INT);
     }
+    (*idt)[TIMER_VEC] = IdtEntry::new(isr_timer as *const () as u64, GATE_INT);
+    (*idt)[SYSCALL_VEC] = IdtEntry::new(isr_syscall as *const () as u64, GATE_INT_USER);
     let ptr = IdtPtr {
         limit: (core::mem::size_of_val(&*idt) - 1) as u16,
         base: idt as u64,

@@ -109,3 +109,93 @@ print_nibble:
 1:  add al, '0'
     out dx, al
     ret
+
+// ---------------------------------------------------------------------------
+// Returning handlers: timer preemption (vector 32) and syscalls (int 0x80).
+// The Rust handler receives rsp pointing at an IrqFrame (15 GPRs then the
+// CPU iret frame) and returns the frame to resume in — possibly another
+// process's, which is what makes this a context switch.
+// ---------------------------------------------------------------------------
+
+.macro SAVE_REGS
+    push rax
+    push rbx
+    push rcx
+    push rdx
+    push rsi
+    push rdi
+    push rbp
+    push r8
+    push r9
+    push r10
+    push r11
+    push r12
+    push r13
+    push r14
+    push r15
+.endm
+
+.macro RESTORE_REGS
+    pop r15
+    pop r14
+    pop r13
+    pop r12
+    pop r11
+    pop r10
+    pop r9
+    pop r8
+    pop rbp
+    pop rdi
+    pop rsi
+    pop rdx
+    pop rcx
+    pop rbx
+    pop rax
+.endm
+
+.global isr_timer
+isr_timer:
+    SAVE_REGS
+    mov rdi, rsp
+    call timer_handler
+    mov rsp, rax
+    jmp irq_tail
+
+.global isr_syscall
+isr_syscall:
+    SAVE_REGS
+    mov rdi, rsp
+    call syscall_handler
+    mov rsp, rax
+    jmp irq_tail
+
+.global irq_tail
+irq_tail:
+    RESTORE_REGS
+    iretq
+
+// First entry into ring 3: rdi = a fabricated IrqFrame on a process kernel
+// stack. Reuses the same pop+iretq path real interrupts take.
+.global enter_user
+enter_user:
+    mov rsp, rdi
+    jmp irq_tail
+
+// Load the new GDT's data segments, far-return to refresh CS (0x08), and
+// load the task register for the TSS at selector 0x28.
+.global seg_reload
+seg_reload:
+    mov ax, 0x10
+    mov ds, ax
+    mov es, ax
+    mov fs, ax
+    mov gs, ax
+    mov ss, ax
+    push 0x08
+    lea rax, [rip + 1f]
+    push rax
+    retfq
+1:
+    mov ax, 0x28
+    ltr ax
+    ret
