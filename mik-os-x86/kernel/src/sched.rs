@@ -41,6 +41,9 @@ pub struct IrqFrame {
 const EMPTY: u8 = 0;
 const READY: u8 = 1;
 const DEAD: u8 = 2;
+/// Blocked in `sys_read` waiting for input; the saved frame's rip was
+/// rewound to the `int 0x80` instruction so waking re-executes the syscall.
+const WAITING: u8 = 3;
 
 pub struct Proc {
     pml4: u64,
@@ -62,6 +65,10 @@ static mut CUR: usize = 0;
 /// Gates timer work: ticks arriving before start() (e.g. the IRQ0 the BIOS
 /// PIT leaves latched from boot) are EOI'd and dropped, not scheduled.
 static mut SCHED_ACTIVE: bool = false;
+/// Set while schedule() is parked in the all-waiting idle loop: a tick that
+/// fires there carries an idle-loop frame that must not be saved over a
+/// blocked process's real frame, so the timer drops it.
+static mut IN_IDLE: bool = false;
 
 const USER_CODE_VA: u64 = 0x4000_0000;
 const USER_STACK_VA: u64 = 0x4000_1000; // one page; rsp starts at its top
@@ -134,8 +141,23 @@ unsafe fn schedule(frame: *mut IrqFrame) -> *mut IrqFrame {
             return procs[next].frame;
         }
     }
-    // Nothing else is runnable: resume the current process if it is alive,
-    // otherwise every process is dead and the machine can stop.
+    // Nothing else is runnable. If some process is merely blocked on input,
+    // idle with interrupts on until a device ISR marks it READY again, then
+    // resume it directly — the IN_IDLE gate keeps the timer from scheduling
+    // a meaningless idle-loop frame over a blocked process's saved one.
+    if procs[cur].state != READY && procs.iter().any(|p| p.state == WAITING) {
+        *core::ptr::addr_of_mut!(IN_IDLE) = true;
+        loop {
+            core::arch::asm!("sti; hlt", options(nomem, nostack));
+            if let Some(i) = procs.iter().position(|p| p.state == READY) {
+                *core::ptr::addr_of_mut!(IN_IDLE) = false;
+                *core::ptr::addr_of_mut!(CUR) = i;
+                seg::set_rsp0(procs[i].kstack_top);
+                mem::switch_cr3(procs[i].pml4);
+                return procs[i].frame;
+            }
+        }
+    }
     if procs[cur].state != READY {
         serial::write_str("all processes dead\n");
         loop {
@@ -145,6 +167,19 @@ unsafe fn schedule(frame: *mut IrqFrame) -> *mut IrqFrame {
     frame
 }
 
+/// Called by input-device ISRs after pushing a byte: every process blocked
+/// in `sys_read` becomes runnable again; each resumes by re-executing its
+/// `int 0x80` (rip was rewound 2 bytes at block time) and pops the byte on
+/// re-entry.
+pub unsafe fn wake_on_input() {
+    let procs = &mut *core::ptr::addr_of_mut!(PROCS);
+    for p in procs.iter_mut() {
+        if p.state == WAITING {
+            p.state = READY;
+        }
+    }
+}
+
 /// IRQ0: acknowledge the PIC, then treat the tick as an involuntary yield.
 /// Before start() arms the scheduler, a tick is acknowledged and dropped —
 /// a pre-boot IRQ0 can sit latched in the PIC and fire on the first unmask.
@@ -152,7 +187,14 @@ unsafe fn schedule(frame: *mut IrqFrame) -> *mut IrqFrame {
 extern "C" fn timer_handler(frame: *mut IrqFrame) -> *mut IrqFrame {
     unsafe {
         pic::eoi();
-        if !core::ptr::addr_of!(SCHED_ACTIVE).read() {
+        // Poll the UART as a delivery safety net: a byte that arrived during
+        // an IF=0 window (or whose IRQ4 was coalesced/missed) lands in the
+        // input buffer here instead of waiting for a keyboard-class IRQ that
+        // may not come on an emulated UART.
+        serial::drain_rx();
+        if !core::ptr::addr_of!(SCHED_ACTIVE).read()
+            || core::ptr::addr_of!(IN_IDLE).read()
+        {
             frame
         } else {
             schedule(frame)
@@ -161,15 +203,18 @@ extern "C" fn timer_handler(frame: *mut IrqFrame) -> *mut IrqFrame {
 }
 
 /// Syscall ABI: rax = number (1 write_char, 2 exit, 3 yield, 4 fork,
-/// 5 exec, 6 sbrk), rdi = arg. write/sbrk resume the same frame; the others
-/// may return a different process's frame (yield/exit/fork scheduling) or a
-/// rewritten one (exec).
+/// 5 exec, 6 sbrk, 7 read), rdi = arg. write/read/sbrk resume the same
+/// frame; the others may return a different process's frame (yield/exit/
+/// fork scheduling, or a blocked sys_read), or a rewritten one (exec).
 #[no_mangle]
 unsafe extern "C" fn syscall_handler(frame: *mut IrqFrame) -> *mut IrqFrame {
     let f = &mut *frame;
     match f.rax {
         1 => {
+            // sys_write: mirror user output to both consoles — COM1 keeps
+            // testability and debugging, VGA is the user-visible screen.
             serial::write_byte(f.rdi as u8);
+            crate::vga::put_byte(f.rdi as u8);
             frame
         }
         2 => {
@@ -241,11 +286,22 @@ unsafe extern "C" fn syscall_handler(frame: *mut IrqFrame) -> *mut IrqFrame {
             frame
         }
         7 => {
-            f.rax = match serial::read_byte() {
-                Some(b) => b as u64,
-                None => u64::MAX,
-            };
-            frame
+            // sys_read: pop one byte from the input buffer. On empty, block:
+            // mark the process WAITING, rewind rip past `int 0x80` (CD 80 is
+            // 2 bytes) so waking re-executes the syscall and lands the byte,
+            // and switch to a runnable process.
+            match crate::input::pop() {
+                Some(b) => {
+                    f.rax = b as u64;
+                    frame
+                }
+                None => {
+                    let procs = &mut *core::ptr::addr_of_mut!(PROCS);
+                    procs[*core::ptr::addr_of!(CUR)].state = WAITING;
+                    f.rip -= 2;
+                    schedule(frame)
+                }
+            }
         }
         6 => {
             // sbrk: lazily grow the demand region — no pages are mapped yet;

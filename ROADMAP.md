@@ -268,7 +268,19 @@ Once the x86-64 kernel is solid, these features can be added in any order — bu
 
 ### Milestone 3.2 — Real Device Drivers (Keyboard, VGA, PCI)
 
-**Status:** Not started.
+**Status:** Complete — `pci.rs` enumerates all buses via config ports
+`0xCF8`/`0xCFC` and prints the QEMU topology (i440FX, PIIX3, VGA, e1000);
+`serial::enable_rx_irq` arms UART IRQ4 + 16550 FIFOs and `kbd.rs` decodes
+set-1 scancodes on IRQ1 — both feed a shared input ring buffer. `sys_read`
+now blocks: a `WAITING` process rewinds `rip` over its `int 0x80` and
+re-executes the syscall when an ISR wakes it; `schedule()` idles in
+`sti;hlt` (under an `IN_IDLE` tick gate) if everything is blocked, and the
+timer also drains the UART as a delivery safety net. `vga.rs` writes the
+80x25 text console at `0xB8000` — `sys_write` mirrors to COM1+VGA, so the
+VM is interactive from keyboard to window. The shell does line discipline
+in user space (echo, Enter submits, backspace erases). Simplifications:
+extended (`E0`) scancodes mostly ignored, PCI finds but does not attach
+drivers, no kernel-side canonical tty.
 
 **Goal:** Replace the polled serial-only console with real interrupt-driven devices — the first hardware the kernel drives that it did not invent.
 

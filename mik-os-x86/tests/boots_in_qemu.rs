@@ -11,7 +11,8 @@ use std::time::Duration;
 /// and still sees 'D' (proof the child's write stayed private), writes 'p',
 /// and exits. Process B prints 'B' whenever the timer preempts, and the
 /// serial shell prints "mik> " plus the version banner when the test writes
-/// 'v' into QEMU's stdin — the Phase 3 console input path.
+/// "v\n" into QEMU's stdin — the Phase 3 interrupt-driven console input
+/// path (UART IRQ4 -> ring buffer -> blocked sys_read -> line discipline).
 #[test]
 fn bios_image_boots_and_process_syscalls_work() {
     let Some(qemu) = try_find_qemu() else {
@@ -49,11 +50,16 @@ fn bios_image_boots_and_process_syscalls_work() {
         let _ = stdout.read_to_string(&mut s);
         s
     });
-    // Let the demo run, then send 'v' — the shell should echo it and print
-    // the version banner — then 'q' to exit the shell.
+    // Let the demo run, then type "v\nq\n" — the shell's line discipline
+    // submits on Enter: 'v' prints the version banner, 'q' exits. Bytes are
+    // paced because QEMU's Windows stdio chardev can hold a burst host-side
+    // and only feed the guest UART one byte per read cycle.
     std::thread::sleep(Duration::from_secs(3));
-    let _ = stdin.write_all(b"vq");
-    let _ = stdin.flush();
+    for b in b"v\nq\n" {
+        let _ = stdin.write_all(&[*b]);
+        let _ = stdin.flush();
+        std::thread::sleep(Duration::from_millis(300));
+    }
     std::thread::sleep(Duration::from_secs(7));
     let _ = child.kill();
     let _ = child.wait();

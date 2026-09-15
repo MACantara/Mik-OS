@@ -73,43 +73,81 @@ prog_c_start:
 3:  jmp 3b
 prog_c_end:
 
-// prog SH: serial console shell. Prints "mik> " then loops on sys_read;
-// 'v' prints the version banner, 'q' exits, anything else echoes. Idle
-// reads yield the slice instead of spinning. This process was never
-// forked, so its stack page is writable and call/push are legal — the
-// string printer can be a real subroutine.
+// prog SH: console shell with line discipline. Prints "mik> ", echoes
+// bytes as typed, buffers until Enter (\r or \n), honors backspace, then
+// dispatches the one-letter line: 'v' version, 'q' exit, else "?".
+// sys_read blocks until the input buffer has a byte, so the loop never
+// spins. rbx = line length; it survives syscalls because IrqFrame
+// saves/restores every GPR. This process was never forked, so its stack
+// and code pages are writable — call/push and the .fill buffer are legal.
 .global prog_sh_start
 .global prog_sh_end
 prog_sh_start:
     lea rsi, [rip + sh_prompt]
     call sh_print
+    xor ebx, ebx
 sh_loop:
     mov eax, 7
-    int 0x80                    // sys_read -> rax = byte or -1
-    cmp rax, -1
-    jne sh_have
-    mov eax, 3
-    int 0x80                    // idle -> yield the slice
-    jmp sh_loop
-sh_have:
-    mov rbx, rax
-    cmp bl, 'v'
-    je sh_ver
-    cmp bl, 'q'
-    je sh_quit
-    mov edi, ebx                // echo
+    int 0x80                    // sys_read -> byte in al (blocks)
+    cmp al, 13                  // '\r'
+    je sh_enter
+    cmp al, 10                  // '\n'
+    je sh_enter
+    cmp al, 8                   // backspace
+    je sh_bs
+    cmp al, 0x7F                // DEL sent by some terminals
+    je sh_bs
+    cmp rbx, 63
+    jae sh_loop                 // line full: drop the byte
+    lea rsi, [rip + sh_line]
+    mov [rsi + rbx], al
+    inc rbx
+    mov edi, eax                // echo as typed
     mov eax, 1
     int 0x80
     jmp sh_loop
+sh_bs:
+    test rbx, rbx
+    je sh_loop
+    dec rbx
+    lea rsi, [rip + sh_bs_seq]  // erase visually: back, space, back
+    call sh_print
+    jmp sh_loop
+sh_enter:
+    mov edi, 10                 // '\n'
+    mov eax, 1
+    int 0x80
+    cmp rbx, 1                  // only single-letter commands for now
+    jne sh_maybe_empty
+    lea rsi, [rip + sh_line]
+    movzx eax, byte ptr [rsi]
+    cmp al, 'v'
+    je sh_ver
+    cmp al, 'q'
+    je sh_quit
+    lea rsi, [rip + sh_unknown]
+    call sh_print
+    jmp sh_again
+sh_maybe_empty:
+    test rbx, rbx
+    je sh_again                 // bare Enter -> fresh prompt
+    lea rsi, [rip + sh_unknown]
+    call sh_print
+    jmp sh_again
 sh_ver:
     lea rsi, [rip + sh_version]
     call sh_print
-    jmp sh_loop
+    jmp sh_again
 sh_quit:
     mov eax, 2
     int 0x80
 sh_dead:
     jmp sh_dead
+sh_again:
+    xor ebx, ebx
+    lea rsi, [rip + sh_prompt]
+    call sh_print
+    jmp sh_loop
 
 // rsi -> NUL-terminated string. Clobbers rax and rdi.
 sh_print:
@@ -125,4 +163,7 @@ sh_ret:
 
 sh_prompt:  .asciz "mik> "
 sh_version: .asciz "Mik OS x86-64 shell\n"
+sh_unknown: .asciz "?\n"
+sh_bs_seq:  .byte 8, ' ', 8, 0
+sh_line:    .fill 64, 1, 0
 prog_sh_end:
