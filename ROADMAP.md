@@ -27,9 +27,10 @@ scheduler with per-process page tables, demand paging, and `fork`/`exec`/
 `yield`/`exit`, demonstrated by `mik-os/tests/os.rs`. Deliberate
 simplifications remain: `fork` copies eagerly instead of using COW, and there
 is no pseudo file system / `READ` syscall yet. Phase 2 has started: Milestone
-2.1 is in progress — a minimal x86-64 long-mode kernel boots under QEMU via
-the PVH direct-boot ABI, sets up a GDT and initial page tables, and prints a
-serial banner.
+2.1 is complete — a custom boot sector and stage2 loader boot a real BIOS
+disk image through real mode, protected mode, and into long mode, where the
+kernel installs a GDT, a minimal IDT, initial page tables, and prints a
+serial banner. The PVH direct-boot path remains available for comparison.
 
 ## Phase 1: Mik-64 OS Core (Complete Learning Sandbox)
 
@@ -132,9 +133,14 @@ This phase is the educational bridge from the clean Mik-64 world to the real, qu
 
 ### Milestone 2.1 — x86-64 Bootloader and Long Mode
 
-**Status:** In progress — minimal long-mode boot via the PVH direct-boot ABI works
-(GDT, initial page tables, serial output). A custom boot sector / stage1 loader
-and an IDT are still pending.
+**Status:** Complete — a custom 512-byte boot sector loads stage2 plus the flat
+kernel via INT 13h, enables A20, and enters protected mode; stage2 copies the
+kernel to `0x400000`, zeroes `.bss`, and jumps to the same `_start` contract
+PVH delivers. `boot.S` then builds the PML4/PDPT/PD identity map and enters
+long mode. The kernel installs a 32-entry exception IDT (`isr.S`/`idt.rs`) and
+demonstrates it with `int3` (`EX03` on serial). `qemu` boots the BIOS disk
+image; `pvh` keeps the direct-boot path. Verified by
+`mik-os-x86/tests/boots_in_qemu.rs` and `tests/disk_image.rs`.
 
 **Goal:** Boot a real x86-64 kernel image under QEMU without any borrowed UEFI/GRUB code.
 

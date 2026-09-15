@@ -4,6 +4,11 @@
 use core::arch::global_asm;
 
 global_asm!(include_str!("boot.S"));
+global_asm!(include_str!("boot16.S"));
+global_asm!(include_str!("stage2.S"));
+global_asm!(include_str!("isr.S"));
+
+mod idt;
 
 #[no_mangle]
 pub extern "C" fn kmain() -> ! {
@@ -15,6 +20,10 @@ pub extern "C" fn kmain() -> ! {
         for b in banner {
             core::arch::asm!("out dx, al", in("dx") COM1, in("al") *b);
         }
+        idt::init();
+        // Prove the IDT works: int3 delivers vector 3 to the stub, which
+        // prints "EX03" on COM1 and halts.
+        core::arch::asm!("int3");
     }
     loop {
         unsafe { core::arch::asm!("hlt"); }
