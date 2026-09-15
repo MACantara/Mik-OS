@@ -22,6 +22,7 @@ extern "C" {
 
 mod ata;
 mod e820;
+mod fs;
 mod idt;
 mod input;
 mod kbd;
@@ -65,8 +66,18 @@ pub extern "C" fn kmain() -> ! {
         pci::scan();
         serial::write_str("gdt/tss/pic/kbd/uart ok\n");
 
-        // Block device: probe the boot disk (absent under PVH).
+        // Block device + Mik-FS: probe the boot disk (absent under PVH),
+        // then mount or format. `x` is seeded with prog_d's bytes so
+        // `run x` exercises exec-from-disk.
         serial::write_str(if ata::init() { "ata ok\n" } else { "ata: no disk\n" });
+        let prog_d = core::slice::from_raw_parts(
+            &prog_d_start as *const u8,
+            &prog_d_end as *const u8 as usize - &prog_d_start as *const u8 as usize,
+        );
+        let nfiles = fs::init(prog_d);
+        serial::write_str("fs: ");
+        serial::write_dec(nfiles as u64);
+        serial::write_str(" files\n");
 
         // Spawn the user processes and hand the CPU to the scheduler. The
         // deterministic sequence is "ADcEDp" (demand fault, COW child, exec,

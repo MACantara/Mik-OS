@@ -40,10 +40,21 @@ pub struct IrqFrame {
 
 const EMPTY: u8 = 0;
 const READY: u8 = 1;
-const DEAD: u8 = 2;
 /// Blocked in `sys_read` waiting for input; the saved frame's rip was
 /// rewound to the `int 0x80` instruction so waking re-executes the syscall.
 const WAITING: u8 = 3;
+
+/// An open file descriptor: which directory entry, the read/write cursor,
+/// and the mode `open` was called with. fds 0/1 are the console and never
+/// occupy a slot; slots index this array as fd-2.
+#[derive(Clone, Copy)]
+struct Fd {
+    used: bool,
+    dir: u32,
+    pos: u32,
+    write: bool,
+}
+const EMPTY_FD: Fd = Fd { used: false, dir: 0, pos: 0, write: false };
 
 pub struct Proc {
     pml4: u64,
@@ -52,14 +63,17 @@ pub struct Proc {
     state: u8,
     /// Lazily-mapped heap ceiling: [USER_DATA_VA, brk) is demand-paged.
     brk: u64,
+    /// Per-process fd table — fork copies it, so a child inherits the
+    /// parent's open files (with independent cursors).
+    fds: [Fd; 4],
 }
 
 const NPROC: usize = 4;
 static mut PROCS: [Proc; NPROC] = [
-    Proc { pml4: 0, kstack_top: 0, frame: core::ptr::null_mut(), state: EMPTY, brk: 0 },
-    Proc { pml4: 0, kstack_top: 0, frame: core::ptr::null_mut(), state: EMPTY, brk: 0 },
-    Proc { pml4: 0, kstack_top: 0, frame: core::ptr::null_mut(), state: EMPTY, brk: 0 },
-    Proc { pml4: 0, kstack_top: 0, frame: core::ptr::null_mut(), state: EMPTY, brk: 0 },
+    Proc { pml4: 0, kstack_top: 0, frame: core::ptr::null_mut(), state: EMPTY, brk: 0, fds: [EMPTY_FD; 4] },
+    Proc { pml4: 0, kstack_top: 0, frame: core::ptr::null_mut(), state: EMPTY, brk: 0, fds: [EMPTY_FD; 4] },
+    Proc { pml4: 0, kstack_top: 0, frame: core::ptr::null_mut(), state: EMPTY, brk: 0, fds: [EMPTY_FD; 4] },
+    Proc { pml4: 0, kstack_top: 0, frame: core::ptr::null_mut(), state: EMPTY, brk: 0, fds: [EMPTY_FD; 4] },
 ];
 static mut CUR: usize = 0;
 /// Gates timer work: ticks arriving before start() (e.g. the IRQ0 the BIOS
@@ -122,7 +136,7 @@ pub unsafe fn spawn(code: &[u8]) {
         rsp: USER_STACK_VA + 0x1000,
         ss: seg::UDATA as u64,
     });
-    procs[i] = Proc { pml4, kstack_top, frame: fp, state: READY, brk: USER_DATA_VA };
+    procs[i] = Proc { pml4, kstack_top, frame: fp, state: READY, brk: USER_DATA_VA, fds: [EMPTY_FD; 4] };
 }
 
 /// Save `frame` into the current process, pick the next READY process
@@ -203,9 +217,10 @@ extern "C" fn timer_handler(frame: *mut IrqFrame) -> *mut IrqFrame {
 }
 
 /// Syscall ABI: rax = number (1 write_char, 2 exit, 3 yield, 4 fork,
-/// 5 exec, 6 sbrk, 7 read), rdi = arg. write/read/sbrk resume the same
-/// frame; the others may return a different process's frame (yield/exit/
-/// fork scheduling, or a blocked sys_read), or a rewritten one (exec).
+/// 5 exec, 6 sbrk, 7 read, 8 open, 9 close, 10 fread, 11 fwrite,
+/// 12 exec_file, 13 ls); rdi/rsi/rdx carry args. write/read/sbrk and the
+/// fd calls resume the same frame; yield/exit/fork/blocking-read may
+/// return another process's frame; exec/exec_file return a rewritten one.
 #[no_mangle]
 unsafe extern "C" fn syscall_handler(frame: *mut IrqFrame) -> *mut IrqFrame {
     let f = &mut *frame;
@@ -218,7 +233,9 @@ unsafe extern "C" fn syscall_handler(frame: *mut IrqFrame) -> *mut IrqFrame {
             frame
         }
         2 => {
-            (*core::ptr::addr_of_mut!(PROCS))[*core::ptr::addr_of!(CUR)].state = DEAD;
+            // exit frees the slot outright (EMPTY, reusable by fork/spawn)
+            // — the dead frames/tables still leak, same as before.
+            (*core::ptr::addr_of_mut!(PROCS))[*core::ptr::addr_of!(CUR)].state = EMPTY;
             schedule(frame)
         }
         3 => schedule(frame),
@@ -243,6 +260,7 @@ unsafe extern "C" fn syscall_handler(frame: *mut IrqFrame) -> *mut IrqFrame {
                         frame: cfp,
                         state: READY,
                         brk: procs[cur].brk,
+                        fds: procs[cur].fds, // inherit the parent's open files
                     };
                     f.rax = 1;
                     // Parent's pages just lost W: flush its TLB so a stale
@@ -255,34 +273,146 @@ unsafe extern "C" fn syscall_handler(frame: *mut IrqFrame) -> *mut IrqFrame {
         }
         5 => {
             // exec: replace the user address space with a fresh table
-            // running the embedded prog_c image, and rewrite the current
-            // frame so iretq enters the new program in ring 3.
-            // Old user frames/tables are leaked — a real exec frees them;
-            // the upgrade path is a table walker over the private PD chain.
+            // running the embedded prog_c image.
             let code = core::slice::from_raw_parts(
                 &prog_c_start as *const u8,
                 &prog_c_end as *const u8 as usize - &prog_c_start as *const u8 as usize,
             );
-            let pml4 = mem::build_user_table();
-            let cf = mem::alloc_frame().expect("out of frames for exec code");
-            core::ptr::copy_nonoverlapping(code.as_ptr(), cf as *mut u8, code.len());
-            mem::map_4k(pml4 as *mut u64, USER_CODE_VA, cf, mem::PTE_P | mem::PTE_W | mem::PTE_U);
-            let sf = mem::alloc_frame().expect("out of frames for exec stack");
-            mem::map_4k(pml4 as *mut u64, USER_STACK_VA, sf, mem::PTE_P | mem::PTE_W | mem::PTE_U);
+            exec_image(code, f);
+            frame
+        }
+        8 => {
+            // open(rdi=name ptr, rsi=len, rdx=mode 0=read 1=write) ->
+            // fd >= 2 or -1. Write mode creates or truncates the file.
+            f.rax = u64::MAX;
             let procs = &mut *core::ptr::addr_of_mut!(PROCS);
             let cur = *core::ptr::addr_of!(CUR);
-            procs[cur].pml4 = pml4;
-            procs[cur].brk = USER_DATA_VA;
-            *f = IrqFrame {
-                r15: 0, r14: 0, r13: 0, r12: 0, r11: 0, r10: 0, r9: 0, r8: 0,
-                rbp: 0, rdi: 0, rsi: 0, rdx: 0, rcx: 0, rbx: 0, rax: 0,
-                rip: USER_CODE_VA,
-                cs: seg::UCODE as u64,
-                rflags: 0x202,
-                rsp: USER_STACK_VA + 0x1000,
-                ss: seg::UDATA as u64,
-            };
-            mem::switch_cr3(pml4);
+            if f.rsi > 0
+                && f.rsi <= crate::fs::NAME_MAX as u64
+                && ustr_ok(procs[cur].pml4, f.rdi, f.rsi)
+            {
+                let name =
+                    core::slice::from_raw_parts(f.rdi as *const u8, f.rsi as usize);
+                let di = if f.rdx == 0 {
+                    crate::fs::find(name)
+                } else {
+                    match crate::fs::find(name) {
+                        Some(i) => {
+                            crate::fs::truncate(i);
+                            Some(i)
+                        }
+                        None => crate::fs::create(name),
+                    }
+                };
+                if let Some(di) = di {
+                    if let Some(s) = procs[cur].fds.iter().position(|fd| !fd.used) {
+                        procs[cur].fds[s] =
+                            Fd { used: true, dir: di as u32, pos: 0, write: f.rdx != 0 };
+                        f.rax = (s + 2) as u64;
+                    }
+                }
+            }
+            frame
+        }
+        9 => {
+            // close(rdi=fd) -> 0 or -1.
+            f.rax = u64::MAX;
+            let procs = &mut *core::ptr::addr_of_mut!(PROCS);
+            let i = f.rdi as usize;
+            if (2..6).contains(&i) && procs[*core::ptr::addr_of!(CUR)].fds[i - 2].used {
+                procs[*core::ptr::addr_of!(CUR)].fds[i - 2] = EMPTY_FD;
+                f.rax = 0;
+            }
+            frame
+        }
+        10 => {
+            // fread(rdi=fd) -> byte or -1 at EOF / on error.
+            f.rax = u64::MAX;
+            let procs = &mut *core::ptr::addr_of_mut!(PROCS);
+            let i = f.rdi as usize;
+            if (2..6).contains(&i) {
+                let fd = &mut procs[*core::ptr::addr_of!(CUR)].fds[i - 2];
+                if fd.used && !fd.write {
+                    if let Some(b) = crate::fs::read_at(fd.dir as usize, fd.pos) {
+                        fd.pos += 1;
+                        f.rax = b as u64;
+                    }
+                }
+            }
+            frame
+        }
+        11 => {
+            // fwrite(rdi=fd, rsi=byte) -> 0 or -1.
+            f.rax = u64::MAX;
+            let procs = &mut *core::ptr::addr_of_mut!(PROCS);
+            let i = f.rdi as usize;
+            if (2..6).contains(&i) {
+                let fd = &mut procs[*core::ptr::addr_of!(CUR)].fds[i - 2];
+                if fd.used
+                    && fd.write
+                    && crate::fs::write_at(fd.dir as usize, fd.pos, f.rsi as u8)
+                {
+                    fd.pos += 1;
+                    f.rax = 0;
+                }
+            }
+            frame
+        }
+        12 => {
+            // exec_file(rdi=name ptr, rsi=len): like exec but the image
+            // comes from Mik-FS. -1 when the file doesn't exist.
+            f.rax = u64::MAX;
+            let procs = &mut *core::ptr::addr_of_mut!(PROCS);
+            let cur = *core::ptr::addr_of!(CUR);
+            if f.rsi > 0
+                && f.rsi <= crate::fs::NAME_MAX as u64
+                && ustr_ok(procs[cur].pml4, f.rdi, f.rsi)
+            {
+                let name =
+                    core::slice::from_raw_parts(f.rdi as *const u8, f.rsi as usize);
+                if let Some(di) = crate::fs::find(name) {
+                    static mut EXEC_BUF: [u8; 4096] = [0; 4096];
+                    let buf = &mut *core::ptr::addr_of_mut!(EXEC_BUF);
+                    let n = crate::fs::read_file(di, buf);
+                    exec_image(&buf[..n], f);
+                }
+            }
+            frame
+        }
+        13 => {
+            // ls: kernel prints "name len\n" for each file to both
+            // consoles — no user buffer needed.
+            crate::fs::each_file(|name, len| {
+                let mut line = [0u8; 40];
+                let mut n = 0;
+                for &b in name {
+                    line[n] = b;
+                    n += 1;
+                }
+                line[n] = b' ';
+                n += 1;
+                let mut d = [0u8; 10];
+                let (mut m, mut v) = (10usize, len);
+                loop {
+                    m -= 1;
+                    d[m] = b'0' + (v % 10) as u8;
+                    v /= 10;
+                    if v == 0 {
+                        break;
+                    }
+                }
+                for &b in &d[m..] {
+                    line[n] = b;
+                    n += 1;
+                }
+                line[n] = b'\n';
+                n += 1;
+                for &b in &line[..n] {
+                    serial::write_byte(b);
+                    crate::vga::put_byte(b);
+                }
+            });
+            f.rax = 0;
             frame
         }
         7 => {
@@ -316,6 +446,57 @@ unsafe extern "C" fn syscall_handler(frame: *mut IrqFrame) -> *mut IrqFrame {
         }
         _ => frame,
     }
+}
+
+/// Validate a userspace buffer for a syscall: every touched page must be
+/// in the private user region and mapped present+user in the caller's
+/// table. The demand pager already covers "legit but not yet touched"
+/// pages via #PF, so a strict P|U check suffices — the first pointer-
+/// carrying syscalls (open/exec_file) keep the boundary this simple.
+unsafe fn ustr_ok(pml4: u64, ptr: u64, len: u64) -> bool {
+    if len == 0
+        || ptr < USER_CODE_VA
+        || ptr.checked_add(len).is_none_or(|end| end > USER_REGION_END)
+    {
+        return false;
+    }
+    let mut page = ptr & !0xFFF;
+    while page < ptr + len {
+        let pte = mem::find_pte(pml4 as *const u64, page);
+        if pte.is_null() || *pte & (mem::PTE_P | mem::PTE_U) != (mem::PTE_P | mem::PTE_U) {
+            return false;
+        }
+        page += 0x1000;
+    }
+    true
+}
+
+/// Replace the current process's user image with `code`: fresh address
+/// space (code + stack pages), frame rewritten in place, CR3 switched —
+/// the syscall's iretq becomes the new program's ring-3 entry. Old user
+/// frames/tables leak — a real exec frees them; the upgrade path is a
+/// table walker over the private PD chain.
+unsafe fn exec_image(code: &[u8], f: &mut IrqFrame) {
+    let pml4 = mem::build_user_table();
+    let cf = mem::alloc_frame().expect("out of frames for exec code");
+    core::ptr::copy_nonoverlapping(code.as_ptr(), cf as *mut u8, code.len());
+    mem::map_4k(pml4 as *mut u64, USER_CODE_VA, cf, mem::PTE_P | mem::PTE_W | mem::PTE_U);
+    let sf = mem::alloc_frame().expect("out of frames for exec stack");
+    mem::map_4k(pml4 as *mut u64, USER_STACK_VA, sf, mem::PTE_P | mem::PTE_W | mem::PTE_U);
+    let procs = &mut *core::ptr::addr_of_mut!(PROCS);
+    let cur = *core::ptr::addr_of!(CUR);
+    procs[cur].pml4 = pml4;
+    procs[cur].brk = USER_DATA_VA;
+    *f = IrqFrame {
+        r15: 0, r14: 0, r13: 0, r12: 0, r11: 0, r10: 0, r9: 0, r8: 0,
+        rbp: 0, rdi: 0, rsi: 0, rdx: 0, rcx: 0, rbx: 0, rax: 0,
+        rip: USER_CODE_VA,
+        cs: seg::UCODE as u64,
+        rflags: 0x202,
+        rsp: USER_STACK_VA + 0x1000,
+        ss: seg::UDATA as u64,
+    };
+    mem::switch_cr3(pml4);
 }
 
 /// Page fault (vector 14): `isr_pf` hands over the iret frame and the CPU
