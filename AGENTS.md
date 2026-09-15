@@ -81,5 +81,11 @@ tasks/
 - The trap vector lives at `0x2000`.
 - The page-fault vector lives at `0x2010`.
 - The bump allocator keeps its `next_page` counter at `0x700000`.
+- The `0x700000` page is reserved metadata the allocator never hands out:
+  allocator state, kernel scratch (`0x700018`..`0x700098`), and the two-slot
+  process table at `0x700100`.
+- User programs run at VA `0x800000` (PD index 4, per-process PT4); the demand
+  region `0x800000`..`0xA00000` is paged in on fault. Syscalls: 0 halt,
+  1 `print_char`, 2 `fork`, 3 `exec`, 4 `yield`, 5 `exit`.
 
 See [`docs/decisions/`](docs/decisions/) for full ADRs.

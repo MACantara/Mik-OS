@@ -15,16 +15,21 @@ Mik OS currently runs on the Mik-64 virtual machine inside a Rust emulator. The 
 - Four-level paging with 4 KiB pages, a 16-entry direct-mapped TLB, and CSR-style `PTBR` / `PMODE` controls.
 - An identity-mapped kernel page table and a kernel page-fault handler that prints `F<fault_code>`.
 - User/supervisor mode with `SRET`, `PTE_U`, and a user-mode system call round-trip.
-- A programmable interval timer, `INT`/`IRET`, and a user program that is interrupted by timer ticks and resumed via `IRET`.
-- A tiny text assembler (`mik-asm`) that produces a flat Mik-64 binary from a minimal line-oriented syntax.
+- A programmable interval timer, `INT`/`IRET`, and interrupt masking while a trap or interrupt handler runs.
+- Demand paging: not-present faults in the user region (`0x800000`..`0xA00000`) allocate a physical page, fill the PTE, and retry the faulting instruction.
+- A two-slot process table, per-process page-table chains sharing the kernel identity map, and round-robin scheduling driven by timer ticks.
+- `fork` (eager copy), `exec`, `yield`, and `exit` syscalls; user register state, `pc`, and `PTBR` are saved and restored per process.
+- A tiny text assembler (`mik-asm`) that produces flat Mik-64 binaries; `init` and `prog1` in `mik-os/user/` are assembled at kernel-build time and run as user programs.
 - End-to-end build and run via `cargo test` and `run.ps1`.
 
-Phase 1 milestones are in progress: the free-list allocator, user-mode
-foundation, timer/INT/IRET, and text assembler are working, but demand paging,
-`fork`/`exec`, a round-robin scheduler, and a pseudo file system are still
-pending. Phase 2 has started: Milestone 2.1 is in progress — a minimal x86-64
-long-mode kernel boots under QEMU via the PVH direct-boot ABI, sets up a GDT
-and initial page tables, and prints a serial banner.
+Phase 1 is complete: two user processes run under a timer-driven round-robin
+scheduler with per-process page tables, demand paging, and `fork`/`exec`/
+`yield`/`exit`, demonstrated by `mik-os/tests/os.rs`. Deliberate
+simplifications remain: `fork` copies eagerly instead of using COW, and there
+is no pseudo file system / `READ` syscall yet. Phase 2 has started: Milestone
+2.1 is in progress — a minimal x86-64 long-mode kernel boots under QEMU via
+the PVH direct-boot ABI, sets up a GDT and initial page tables, and prints a
+serial banner.
 
 ## Phase 1: Mik-64 OS Core (Complete Learning Sandbox)
 
@@ -32,8 +37,10 @@ The first objective is to prove every major OS concept on the safe, inspectable 
 
 ### Milestone 1.1 — Memory Management Beyond Bump Allocation
 
-**Status:** In progress — a physical free-list allocator (`alloc_page` / `free_page`)
-works; per-process page tables, demand paging, and COW are still pending.
+**Status:** Complete — free-list allocator, per-process page tables (each
+process gets a PML4/PDPT/PD whose PD[4] points at a private PT4 covering the
+user region), and demand paging all work. COW is deliberately skipped:
+`fork` copies the user page eagerly.
 
 **Goal:** Move from a one-way bump allocator to a richer physical and virtual memory manager.
 
@@ -51,8 +58,9 @@ works; per-process page tables, demand paging, and COW are still pending.
 
 ### Milestone 1.2 — User-Mode Processes and System Calls
 
-**Status:** In progress — user/supervisor mode and a two-syscall `TRAP` round-trip
-work; `fork`, `exec`, and a process table are still pending.
+**Status:** Complete — a two-slot process table plus `fork`, `exec`, `yield`,
+and `exit` work end-to-end (syscall numbers 2–5 alongside halt and
+`print_char`).
 
 **Goal:** Introduce the process abstraction, user mode, and a proper syscall interface.
 
@@ -71,8 +79,10 @@ work; `fork`, `exec`, and a process table are still pending.
 
 ### Milestone 1.3 — Interrupts, Timer, and Preemptive Scheduling
 
-**Status:** In progress — timer and `INT`/`IRET` foundation complete; round-robin
-scheduler pending.
+**Status:** Complete — the timer interrupt vector points at the scheduler,
+which saves x1..x14, `pc` (via `CSR_EPC`), and `PTBR` into the current slot
+and round-robins to the next live process. Interrupts are masked while any
+handler runs and re-enabled by `ERET`/`IRET`/`SRET`.
 
 **Goal:** Replace the cooperative `TRAP` model with true interrupts and a preemptive scheduler.
 
@@ -89,7 +99,10 @@ scheduler pending.
 
 ### Milestone 1.4 — Tiny Mik-64 User Programs and Assembler
 
-**Status:** In progress — text assembler works and produces runnable binaries; `exec` and pseudo file system pending.
+**Status:** Complete — `mik-asm`-built `init` and `prog1` are appended to the
+kernel image and run as user programs; `exec` loads an assembler-produced
+image over the caller's user page. The pseudo file system / `READ` syscall is
+deferred to a later milestone.
 
 **Goal:** Stop hand-assembling and build the smallest possible user-space build chain.
 
@@ -105,6 +118,8 @@ scheduler pending.
 - A user program can print a string and exit.
 
 ### Checkpoint: Mik-64 is a Miniature OS
+
+**Status:** Reached — `mik-os/tests/os.rs` demonstrates all of it.
 
 - Multi-process scheduling works.
 - Syscalls, page tables, demand paging, and user mode are exercised.

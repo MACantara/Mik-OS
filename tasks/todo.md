@@ -57,3 +57,17 @@
 - [x] cargo run -p mik-os-x86 -- qemu starts QEMU and prints a banner
 - [x] Changes are committed, reviewed, and merged
 - [x] ROADMAP.md is updated to show Milestone 2.1 in progress
+
+# Mik OS Phase 1 Closeout Todo
+
+## Checkpoint: Mik-64 is a Miniature OS
+
+- [x] Task 1: Emulator `CSR_EPC` read + interrupt masking in handlers
+- [x] Task 2: Process table, round-robin scheduler, context save/restore
+- [x] Task 3: `fork` / `exec` / `yield` / `exit` syscalls
+- [x] Task 4: Demand paging in the user region (`0x800000`..`0xA00000`)
+- [x] Task 5: `init` / `prog1` user programs assembled by `mik-asm`
+- [x] `cargo test` passes (`mik-os/tests/os.rs` runs two processes to halt)
+- [x] ROADMAP.md is updated to show Phase 1 complete
+
+Deferred: COW `fork`, pseudo file system / `READ` syscall.
