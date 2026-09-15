@@ -36,7 +36,12 @@ kernel-owned 1 GiB identity map, and `CR3` switching to a second address
 space that runs a user page. Milestone 2.3 is complete as well — user-mode
 processes with a GDT/TSS, a PIC-remapped PIT tick at 100 Hz, an `int 0x80`
 syscall gate, and a frame-return round-robin scheduler that interleaves two
-ring-3 programs (`ABaA` on serial).
+ring-3 programs (`ABaA` on serial). Milestone 2.4 completes the Mik-64
+process model on real hardware: a resumable page-fault handler demand-maps
+`sbrk`'d heap pages, `fork` shares the parent's user frames copy-on-write
+(parent still reads `'D'` after the child writes `'c'`), and `exec` swaps
+the live process into a fresh address space running an embedded image —
+serial shows `ADcEDp` with `B`s interleaved by the timer.
 
 ## Phase 1: Mik-64 OS Core (Complete Learning Sandbox)
 
@@ -216,7 +221,22 @@ Verified by `mik-os-x86/tests/boots_in_qemu.rs` on both BIOS and PVH paths.
 
 ### Milestone 2.4 — Demand Paging and Fork on x86-64
 
-**Status:** Not started.
+**Status:** Complete — vector 14 got a dedicated `isr_pf` stub that preserves
+all GPRs, lifts the CPU error code into the handler's second argument, and
+slides the iret frame over the code slot so `pf_handler` shares the
+`IrqFrame`/`irq_tail` return path. `sys_sbrk` (rax=6) lazily grows
+`procs[cur].brk` over `0x40002000`; a not-present fault in `[base, brk)`
+demand-maps a zeroed frame `P|W|U` with `invlpg` and retries. `sys_fork`
+(rax=4) deep-clones the private user PD/PT chain sharing leaf frames
+read-only on both sides (no refcount — each writer copies on first fault;
+the parent TLB is flushed by a CR3 reload); a present+write fault on a
+`P|U|!W` leaf copies the page for the faulting process only. `sys_exec`
+(rax=5) builds a fresh user table around the embedded `prog_c` image,
+rewrites the live `IrqFrame`, and `switch_cr3`s before returning — the
+syscall's `iretq` is the new program's ring-3 entry. Serial shows `ADcEDp`
+(with `B`s interleaved): demand write `'D'`, child COW write `'c'`, exec'd
+`'E'`, parent still reads `'D'` (isolation), parent's own COW `'p'`.
+Verified by `mik-os-x86/tests/boots_in_qemu.rs` on BIOS and PVH paths.
 
 **Goal:** Bring over the richer memory features from Mik-64.
 
