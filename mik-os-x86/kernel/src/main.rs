@@ -17,6 +17,9 @@ extern "C" {
 mod e820;
 mod idt;
 mod mem;
+mod pic;
+mod sched;
+mod seg;
 mod serial;
 
 #[no_mangle]
@@ -42,6 +45,13 @@ pub extern "C" fn kmain() -> ! {
         mem::free_frame(a);
         let c = mem::alloc_frame().expect("out of frames");
         serial::write_str(if c == a { "alloc/free ok\n" } else { "alloc/free BAD\n" });
+
+        // Ring-3 plumbing: user segments + TSS, PIC remap, PIT timer. Nothing
+        // fires yet — IF stays clear until the first iretq into user mode.
+        seg::init();
+        pic::init_pic();
+        pic::init_pit();
+        serial::write_str("gdt/tss/pic/pit ok\n");
 
         // First user address space: a private PML4 sharing the kernel's
         // identity PD, with the user blob mapped at 0x40000000 — a VA that is

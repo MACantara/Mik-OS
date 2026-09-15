@@ -1,11 +1,21 @@
-//! COM1 serial output — the kernel's only console. Assumes QEMU's UART
-//! transmitter is always ready; a real UART would poll LSR bit 5 (THRE)
-//! before each byte.
+//! Port I/O primitives + COM1 serial output — the kernel's only console.
+//! Assumes QEMU's UART transmitter is always ready; a real UART would poll
+//! LSR bit 5 (THRE) before each byte.
 
 const COM1: u16 = 0x3F8;
 
+pub unsafe fn outb(port: u16, v: u8) {
+    core::arch::asm!("out dx, al", in("dx") port, in("al") v);
+}
+
+pub unsafe fn inb(port: u16) -> u8 {
+    let v: u8;
+    core::arch::asm!("in al, dx", in("dx") port, out("al") v);
+    v
+}
+
 pub fn write_byte(b: u8) {
-    unsafe { core::arch::asm!("out dx, al", in("dx") COM1, in("al") b) }
+    unsafe { outb(COM1, b) }
 }
 
 pub fn write_str(s: &str) {
