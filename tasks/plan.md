@@ -1,5 +1,9 @@
 # Implementation Plan: User Mode and System Call Round-Trip
 
+> **Status: completed (Milestone 1.2).** This is a historical per-milestone
+> plan kept for reference. Current milestone plans live in
+> `~/.devin/plans/`; progress is tracked in `todo.md` and `ROADMAP.md`.
+
 ## Overview
 
 Add user/supervisor mode to the Mik-64 emulator and run a tiny user program through a system call. This is the smallest vertical slice of Milestone 1.2 in `ROADMAP.md`.

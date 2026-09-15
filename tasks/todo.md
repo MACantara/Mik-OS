@@ -172,3 +172,15 @@ reclamation on exec+exit, refcounted COW sharing, multi-page stacks.
 Deferred: IRQ4 + blocking read with a WAITING state, line buffering and
 line discipline, respawn on shell exit, launching programs from a
 filesystem, keyboard/VGA drivers, SMP, networking.
+
+# Documentation Sync
+
+- [x] README rewritten: real `run.ps1` output, mik-asm/mik-os-x86 crates,
+      x86-64 quick start, current status
+- [x] architecture.md refreshed: shipped Mik-64 kernel features, new x86-64
+      layer (boot chain, memory, IDT/PIC/PIT, scheduler, syscalls, shell),
+      corrected Mik-64 memory-map addresses, updated testing + future work
+- [x] AGENTS.md project layout: added mik-os/user+tests, mik-os-x86 crate;
+      fixed misplaced test entries
+- [x] tasks/plan.md marked historical; ideas doc got a "where this landed"
+      note
