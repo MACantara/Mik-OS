@@ -11,11 +11,11 @@ Build a from-scratch operating system named Mik OS and deeply understand its int
 Mik OS currently runs on the Mik-64 virtual machine inside a Rust emulator. The hand-assembled kernel demonstrates the following working concepts:
 
 - Boot, memory-mapped serial I/O, and a simple `HALT` / `print_char` syscall model.
-- A bump page allocator tracking the next free 4 KiB page at `0x700000`.
+- A physical free-list allocator (`alloc_page` / `free_page`) headed at `0x700008`, falling back to the bump `next_page` counter at `0x700000`.
 - Four-level paging with 4 KiB pages, a 16-entry direct-mapped TLB, and CSR-style `PTBR` / `PMODE` controls.
 - An identity-mapped kernel page table and a kernel page-fault handler that prints `F<fault_code>`.
 - User/supervisor mode with `SRET`, `PTE_U`, and a user-mode system call round-trip.
-- A programmable interval timer, `INT`/`IRET`, and a user program that receives timer ticks.
+- A programmable interval timer, `INT`/`IRET`, and a user program that is interrupted by timer ticks and resumed via `IRET`.
 - A tiny text assembler (`mik-asm`) that produces a flat Mik-64 binary from a minimal line-oriented syntax.
 - End-to-end build and run via `cargo test` and `run.ps1`.
 
@@ -119,7 +119,7 @@ This phase is the educational bridge from the clean Mik-64 world to the real, qu
 
 **Status:** In progress — minimal long-mode boot via the PVH direct-boot ABI works
 (GDT, initial page tables, serial output). A custom boot sector / stage1 loader
-is still pending.
+and an IDT are still pending.
 
 **Goal:** Boot a real x86-64 kernel image under QEMU without any borrowed UEFI/GRUB code.
 
