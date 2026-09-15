@@ -17,6 +17,7 @@ version = "0.1.0"
 name = "mik-os"
 version = "0.1.0"
 dependencies = [
+ "mik-asm",
  "mik-emu",
 ]
 
