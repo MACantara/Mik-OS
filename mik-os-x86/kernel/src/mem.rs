@@ -1,0 +1,90 @@
+//! Physical memory: a free-list frame allocator fed by the E820 map, plus the
+//! kernel's own page-table management.
+//!
+//! The allocator's free list stores each free frame's link in the frame's
+//! first 8 bytes — no backing structure, no size cap. This is the same
+//! progression Phase 1's Mik-64 kernel followed (bump -> free list).
+
+use crate::e820::{self, E820Entry};
+
+pub const PTE_P: u64 = 1 << 0;
+pub const PTE_W: u64 = 1 << 1;
+pub const PTE_U: u64 = 1 << 2;
+pub const PTE_PS: u64 = 1 << 7;
+
+extern "C" {
+    // Boot-time page tables living in .bss — already identity-mapped, so they
+    // are safe to write before the new map is active.
+    static mut pml4: [u64; 512];
+    static mut pd: [u64; 512];
+    static __bss_end: u8;
+}
+
+static mut FREE_HEAD: u64 = 0;
+
+/// Push a 4 KiB frame back onto the free list.
+///
+/// Safety: `pa` must be a frame the allocator previously handed out (or one
+/// being seeded during `init`), and must be identity-mapped writable.
+pub unsafe fn free_frame(pa: u64) {
+    *(pa as *mut u64) = FREE_HEAD;
+    FREE_HEAD = pa;
+}
+
+/// Pop a 4 KiB frame off the free list, or `None` if empty.
+pub unsafe fn alloc_frame() -> Option<u64> {
+    let head = FREE_HEAD;
+    if head == 0 {
+        None
+    } else {
+        FREE_HEAD = *(head as *const u64);
+        Some(head)
+    }
+}
+
+fn kernel_end() -> u64 {
+    let end = unsafe { &__bss_end as *const u8 as u64 };
+    (end + 0xFFF) & !0xFFF
+}
+
+/// Seed the free list from the E820 map and return the usable frame count.
+///
+/// Two exclusion ranges keep the allocator honest:
+/// - everything below 1 MiB: IVT/BDA, the boot sector, the E820 buffer, and
+///   the stage2 load blob all live there;
+/// - the kernel image `0x400000..__bss_end`: code, page tables, stack.
+pub unsafe fn init() -> u64 {
+    let mut map = [E820Entry { base: 0, len: 0, typ: 0, acpi: 0 }; 32];
+    let n = e820::read_map(&mut map);
+    let kend = kernel_end();
+    let mut frames = 0u64;
+    for e in &map[..n] {
+        if !e.usable() {
+            continue;
+        }
+        let mut f = (e.base + 0xFFF) & !0xFFF;
+        while f + 0x1000 <= e.base + e.len {
+            let below_1mib = f < 0x10_0000;
+            let in_kernel = f >= 0x40_0000 && f < kend;
+            if !below_1mib && !in_kernel {
+                free_frame(f);
+                frames += 1;
+            }
+            f += 0x1000;
+        }
+    }
+    frames
+}
+
+/// Extend the boot page tables to a full 1 GiB identity map and reload CR3.
+///
+/// boot.S built entries pd[0..3] (6 MiB) to survive the mode switch; now that
+/// Rust runs, the map grows to cover all RAM the E820 map can report. Writing
+/// CR3 also flushes the TLB, which is what makes the new entries visible.
+pub unsafe fn extend_identity_map() {
+    let pd_ptr = core::ptr::addr_of_mut!(pd);
+    for (i, e) in (*pd_ptr).iter_mut().enumerate().skip(3) {
+        *e = (i as u64) * 0x20_0000 | PTE_P | PTE_W | PTE_PS;
+    }
+    core::arch::asm!("mov cr3, {}", in(reg) core::ptr::addr_of!(pml4) as u64);
+}

@@ -10,6 +10,7 @@ global_asm!(include_str!("isr.S"));
 
 mod e820;
 mod idt;
+mod mem;
 mod serial;
 
 #[no_mangle]
@@ -17,21 +18,25 @@ pub extern "C" fn kmain() -> ! {
     serial::write_str("Mik-64 -> x86-64 long mode\n");
     unsafe {
         idt::init();
-    }
 
-    let mut map = [e820::E820Entry { base: 0, len: 0, typ: 0, acpi: 0 }; 32];
-    let n = e820::read_map(&mut map);
-    serial::write_str("e820 entries=");
-    serial::write_dec(n as u64);
-    let mut usable = 0u64;
-    for e in &map[..n] {
-        if e.usable() {
-            usable += e.len;
-        }
+        // Grow the identity map first: the free list writes a link into every
+        // frame it hands out, so all usable RAM must be mapped before init —
+        // and the .bss boot tables are already reachable under the old map.
+        mem::extend_identity_map();
+        serial::write_str("identity map: 1 GiB\n");
+
+        let frames = mem::init();
+        serial::write_str("usable frames=");
+        serial::write_dec(frames);
+        serial::write_str("\n");
+
+        // Free-list sanity: alloc a,b; free a; alloc c must reuse a (LIFO).
+        let a = mem::alloc_frame().expect("out of frames");
+        let _b = mem::alloc_frame().expect("out of frames");
+        mem::free_frame(a);
+        let c = mem::alloc_frame().expect("out of frames");
+        serial::write_str(if c == a { "alloc/free ok\n" } else { "alloc/free BAD\n" });
     }
-    serial::write_str(" usable=");
-    serial::write_dec(usable / 1024);
-    serial::write_str("K\n");
 
     unsafe {
         // Prove the IDT works: int3 delivers vector 3 to the stub, which

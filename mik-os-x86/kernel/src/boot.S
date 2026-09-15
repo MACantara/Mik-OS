@@ -89,10 +89,12 @@ gdt64_ptr:
 
 .section .bss
 .align 4096
+.global pml4
 pml4:
     .space 4096
 pdpt:
     .space 4096
+.global pd
 pd:
     .space 4096
 stack_bottom:
