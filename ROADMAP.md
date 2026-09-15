@@ -41,7 +41,10 @@ process model on real hardware: a resumable page-fault handler demand-maps
 `sbrk`'d heap pages, `fork` shares the parent's user frames copy-on-write
 (parent still reads `'D'` after the child writes `'c'`), and `exec` swaps
 the live process into a fresh address space running an embedded image —
-serial shows `ADcEDp` with `B`s interleaved by the timer.
+serial shows `ADcEDp` with `B`s interleaved by the timer. Phase 3 has
+begun with Milestone 3.1: a non-blocking `sys_read` over the COM1 UART and
+a ring-3 console shell (`mik> ` prompt, `v`/`q`/echo builtins) running as
+an ordinary scheduled process.
 
 ## Phase 1: Mik-64 OS Core (Complete Learning Sandbox)
 
@@ -259,8 +262,11 @@ Verified by `mik-os-x86/tests/boots_in_qemu.rs` on BIOS and PVH paths.
 
 Once the x86-64 kernel is solid, these features can be added in any order. They are deliberately left for later because each is a large topic on its own.
 
+### Milestone 3.1 — Serial Console Shell (Complete)
+
+**Status:** Complete — `sys_read` (syscall 7) polls COM1's line status register and returns one byte in `rax` or `-1` when empty, and `prog_sh` runs in ring 3 as a third spawned process: it prints `mik> `, echoes unknown input, prints a version banner on `v`, and exits on `q`, yielding its slice whenever no input is pending. Deliberate simplifications: input is a polled byte stream (no IRQ4, no line buffering or line discipline), `q` leaves the shell dead permanently, and there is no way to launch programs — builtins only.
+
 - **File system:** a simple in-memory or disk-backed file system (e.g. a minimal Mik-FS).
-- **Console shell:** a tiny user-space shell that can run built-in commands.
 - **Networking:** a very basic network stack over a virtual NIC.
 - **Real device drivers:** keyboard, VGA text mode, PCI scanning.
 - **Multi-core/SMP:** bootstrap additional CPUs.

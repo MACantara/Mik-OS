@@ -153,3 +153,22 @@ user-mode fault handling (M2.4).
 
 Deferred: process-kill on unhandled fault (EX0E still halts), frame/table
 reclamation on exec+exit, refcounted COW sharing, multi-page stacks.
+
+# Mik OS x86-64 Milestone 3.1 Closeout Todo
+
+## Checkpoint: Serial Console Shell
+
+- [x] Task 1: `serial::read_byte` — non-blocking LSR poll on COM1,
+      `Some(byte)` when RBR has data
+- [x] Task 2: `sys_read` (7) — returns byte in `rax` or `u64::MAX`; no user
+      pointer crosses the boundary
+- [x] Task 3: `prog_sh` in `user.S` — `mik> ` prompt, `v`/`q`/echo
+      builtins, `sys_yield` on idle reads; spawned third (`NPROC`=4)
+- [x] `boots_in_qemu.rs` pipes `vq` to QEMU stdin, asserts the version
+      banner; `ADcEDp` sequence still verified through the prompt noise
+- [x] ADR-011 (non-blocking read + ring-3 shell), concepts docs,
+      ROADMAP/AGENTS updated
+
+Deferred: IRQ4 + blocking read with a WAITING state, line buffering and
+line discipline, respawn on shell exit, launching programs from a
+filesystem, keyboard/VGA drivers, SMP, networking.

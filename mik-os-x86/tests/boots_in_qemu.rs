@@ -1,5 +1,5 @@
 use mik_os_x86::{build_image, disk_image, kernel_elf, try_find_qemu};
-use std::io::Read;
+use std::io::{Read, Write};
 use std::process::{Command, Stdio};
 use std::time::Duration;
 
@@ -9,8 +9,9 @@ use std::time::Duration;
 /// 'D'), forks, and yields; the child COW-writes 'c' and execs into a
 /// program that prints 'E' and exits; the parent then reads the shared page
 /// and still sees 'D' (proof the child's write stayed private), writes 'p',
-/// and exits. Process B prints 'B' whenever the timer preempts, so its 'B's
-/// are stripped before checking the deterministic sequence "ADcEDp".
+/// and exits. Process B prints 'B' whenever the timer preempts, and the
+/// serial shell prints "mik> " plus the version banner when the test writes
+/// 'v' into QEMU's stdin — the Phase 3 console input path.
 #[test]
 fn bios_image_boots_and_process_syscalls_work() {
     let Some(qemu) = try_find_qemu() else {
@@ -32,19 +33,28 @@ fn bios_image_boots_and_process_syscalls_work() {
         .arg("-drive")
         .arg(format!("format=raw,file={}", img_path.display()))
         .args(["-serial", "stdio", "-display", "none", "-no-reboot", "-no-shutdown"])
+        .stdin(Stdio::piped())
         .stdout(Stdio::piped())
         .spawn()
         .expect("spawn qemu");
 
     // The kernel idles under the timer forever, so drain serial on a thread
-    // and kill QEMU once it has had time to print.
+    // and kill QEMU once it has had time to print. -serial stdio is
+    // bidirectional: writing to QEMU's stdin lands in COM1's receive
+    // register, which the shell polls through sys_read.
     let mut stdout = child.stdout.take().unwrap();
+    let mut stdin = child.stdin.take().unwrap();
     let reader = std::thread::spawn(move || {
         let mut s = String::new();
         let _ = stdout.read_to_string(&mut s);
         s
     });
-    std::thread::sleep(Duration::from_secs(10));
+    // Let the demo run, then send 'v' — the shell should echo it and print
+    // the version banner — then 'q' to exit the shell.
+    std::thread::sleep(Duration::from_secs(3));
+    let _ = stdin.write_all(b"vq");
+    let _ = stdin.flush();
+    std::thread::sleep(Duration::from_secs(7));
     let _ = child.kill();
     let _ = child.wait();
     let out = reader.join().unwrap_or_default();
@@ -62,17 +72,22 @@ fn bios_image_boots_and_process_syscalls_work() {
         "free-list sanity check failed, got: {out:?}"
     );
     assert!(
-        out.contains("sched: 2 procs"),
-        "scheduler did not spawn the two user processes, got: {out:?}"
+        out.contains("sched: 3 procs"),
+        "scheduler did not spawn the three user processes, got: {out:?}"
     );
-    // The deterministic user sequence after "sched: 2 procs" is "ADcEDp"
-    // (demand fault -> 'D', COW child -> 'c', exec -> 'E', parent sees 'D',
-    // parent writes 'p'); B's preempted ticks interleave 'B's anywhere, so
-    // strip them before comparing.
-    let tail = out.split("sched: 2 procs\n").nth(1).unwrap_or("");
-    let demo: String = tail.chars().filter(|c| *c != 'B').collect();
+    // The deterministic user sequence is "ADcEDp" (demand fault -> 'D', COW
+    // child -> 'c', exec -> 'E', parent sees 'D', parent writes 'p'). B's
+    // ticks and the shell's "mik> " prompt/echo interleave anywhere, so keep
+    // only the marker letters before comparing.
+    let tail = out.split("sched: 3 procs\n").nth(1).unwrap_or("");
+    let demo: String = tail.chars().filter(|c| "ADcEp".contains(*c)).collect();
     assert!(
         demo.starts_with("ADcEDp"),
         "demand/fork/exec sequence missing (want ADcEDp), got tail {tail:?}"
+    );
+    // The shell answered 'v' with its version banner over COM1 input.
+    assert!(
+        out.contains("Mik OS x86-64 shell"),
+        "shell did not answer 'v' over serial input, got: {out:?}"
     );
 }

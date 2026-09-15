@@ -72,3 +72,57 @@ prog_c_start:
     int 0x80
 3:  jmp 3b
 prog_c_end:
+
+// prog SH: serial console shell. Prints "mik> " then loops on sys_read;
+// 'v' prints the version banner, 'q' exits, anything else echoes. Idle
+// reads yield the slice instead of spinning. This process was never
+// forked, so its stack page is writable and call/push are legal — the
+// string printer can be a real subroutine.
+.global prog_sh_start
+.global prog_sh_end
+prog_sh_start:
+    lea rsi, [rip + sh_prompt]
+    call sh_print
+sh_loop:
+    mov eax, 7
+    int 0x80                    // sys_read -> rax = byte or -1
+    cmp rax, -1
+    jne sh_have
+    mov eax, 3
+    int 0x80                    // idle -> yield the slice
+    jmp sh_loop
+sh_have:
+    mov rbx, rax
+    cmp bl, 'v'
+    je sh_ver
+    cmp bl, 'q'
+    je sh_quit
+    mov edi, ebx                // echo
+    mov eax, 1
+    int 0x80
+    jmp sh_loop
+sh_ver:
+    lea rsi, [rip + sh_version]
+    call sh_print
+    jmp sh_loop
+sh_quit:
+    mov eax, 2
+    int 0x80
+sh_dead:
+    jmp sh_dead
+
+// rsi -> NUL-terminated string. Clobbers rax and rdi.
+sh_print:
+    movzx edi, byte ptr [rsi]
+    test edi, edi
+    je sh_ret
+    mov eax, 1
+    int 0x80
+    inc rsi
+    jmp sh_print
+sh_ret:
+    ret
+
+sh_prompt:  .asciz "mik> "
+sh_version: .asciz "Mik OS x86-64 shell\n"
+prog_sh_end:

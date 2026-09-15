@@ -51,8 +51,9 @@ pub struct Proc {
     brk: u64,
 }
 
-const NPROC: usize = 3;
+const NPROC: usize = 4;
 static mut PROCS: [Proc; NPROC] = [
+    Proc { pml4: 0, kstack_top: 0, frame: core::ptr::null_mut(), state: EMPTY, brk: 0 },
     Proc { pml4: 0, kstack_top: 0, frame: core::ptr::null_mut(), state: EMPTY, brk: 0 },
     Proc { pml4: 0, kstack_top: 0, frame: core::ptr::null_mut(), state: EMPTY, brk: 0 },
     Proc { pml4: 0, kstack_top: 0, frame: core::ptr::null_mut(), state: EMPTY, brk: 0 },
@@ -237,6 +238,13 @@ unsafe extern "C" fn syscall_handler(frame: *mut IrqFrame) -> *mut IrqFrame {
                 ss: seg::UDATA as u64,
             };
             mem::switch_cr3(pml4);
+            frame
+        }
+        7 => {
+            f.rax = match serial::read_byte() {
+                Some(b) => b as u64,
+                None => u64::MAX,
+            };
             frame
         }
         6 => {

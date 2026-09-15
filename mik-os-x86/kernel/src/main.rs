@@ -14,6 +14,8 @@ extern "C" {
     static prog_a_end: u8;
     static prog_b_start: u8;
     static prog_b_end: u8;
+    static prog_sh_start: u8;
+    static prog_sh_end: u8;
 }
 
 mod e820;
@@ -54,10 +56,11 @@ pub extern "C" fn kmain() -> ! {
         pic::init_pic();
         serial::write_str("gdt/tss/pic ok\n");
 
-        // Spawn the two user processes and hand the CPU to the scheduler.
-        // Expected serial order is deterministic: 'A' (A's first slice),
-        // 'B' (A yielded), 'a' (timer preempted the never-yielding B),
-        // 'A' (A's last slice), exit — then B spins forever.
+        // Spawn the user processes and hand the CPU to the scheduler. The
+        // deterministic sequence is "ADcEDp" (demand fault, COW child, exec,
+        // parent's isolated read, parent's own write) with B's timer-driven
+        // 'B's and the shell's "mik> " prompt interleaved anywhere; after
+        // the demo only B and the shell remain, waiting on ticks and input.
         let prog_a = core::slice::from_raw_parts(
             &prog_a_start as *const u8,
             &prog_a_end as *const u8 as usize - &prog_a_start as *const u8 as usize,
@@ -66,9 +69,14 @@ pub extern "C" fn kmain() -> ! {
             &prog_b_start as *const u8,
             &prog_b_end as *const u8 as usize - &prog_b_start as *const u8 as usize,
         );
+        let prog_sh = core::slice::from_raw_parts(
+            &prog_sh_start as *const u8,
+            &prog_sh_end as *const u8 as usize - &prog_sh_start as *const u8 as usize,
+        );
         sched::spawn(prog_a);
         sched::spawn(prog_b);
-        serial::write_str("sched: 2 procs\n");
+        sched::spawn(prog_sh);
+        serial::write_str("sched: 3 procs\n");
         // Arm the tick last: a pending IRQ0 would be delivered the instant the
         // first iretq sets IF and would preempt before proc A ever runs.
         pic::init_pit();
