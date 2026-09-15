@@ -53,6 +53,8 @@ docs/
     why-x86-boot-and-idt-matter.md
     x86-memory-management.md # E820, free-list allocator, paging, CR3
     why-x86-memory-matters.md
+    x86-interrupts-and-scheduling.md # GDT/TSS, iret frame, PIC/PIT, sched
+    why-interrupts-and-scheduling-matter.md
   architecture.md           # System architecture overview
   decisions/
     ADR-001-vm-first.md     # Why we built a custom VM first
@@ -61,6 +63,8 @@ docs/
     ADR-004-minimal-idt.md
     ADR-005-e820-memory-map.md
     ADR-006-address-space-sharing.md
+    ADR-007-syscall-and-context-switch.md
+    ADR-008-pic-pit-timer.md
 README.md                   # Public project overview
 mik-emu/
   src/lib.rs                # Emulator library
@@ -101,9 +105,10 @@ tasks/
 - The x86-64 kernel ELF carries three payloads: `.boot16` (512-byte boot
   sector at `0x7C00`, kernel length patched at `0x1F8`), `.stage2` (32-bit
   loader at `0x7E00`), and the kernel at `0x400000`. `mik-os-x86`'s image
-  builder packs them into a 64 KiB disk image; stage2 reproduces the PVH
-  handoff so `_start` is shared. A 32-entry exception IDT prints `EXnn` and
-  halts; `kmain` proves it with `int3` (runs last — it never returns).
+  builder packs them into a 128 KiB disk image (sector 0 = boot sector,
+  stage2 at `0x7E00`, kernel sections ≥ `0x400000`; the loader reads sectors
+  1–255 in two batches); stage2 reproduces the PVH handoff so `_start` is
+  shared. A 256-entry IDT prints `EXnn` and halts for exceptions.
 - The boot sector collects the E820 memory map into phys `0x5000` (magic
   `'MMAP'`, u32 count, 24-byte entries); `e820.rs` parses it, with a
   synthetic fallback for the PVH path. `mem.rs` free-lists usable frames
@@ -111,6 +116,17 @@ tasks/
   `.bss` PD to a 1 GiB identity map, and builds per-space PML4s that share
   the kernel PD at PDPT[0] with private user pages at `0x40000000`+.
   Ordering matters: `extend_identity_map` must run before `mem::init`
-  because free-list seeding writes into every frame.
+  because free-list seeding writes into every frame. Ring-3 access needs
+  `PTE_U` at every walk level — `up4[0]` carries it, the shared kernel PD
+  link does not.
+- The x86 scheduler (`sched.rs`) treats one `IrqFrame` (15 GPRs + the iret
+  frame) as a whole process context: `isr_timer`/`isr_syscall` build it,
+  Rust handlers return which frame to resume, `irq_tail` + `iretq` performs
+  the switch including `CR3`. Syscalls are `int 0x80` (rax=1 write,
+  2 exit, 3 yield; rdi=arg) through a DPL-3 interrupt gate. `TSS.rsp0`
+  points at the scheduled process's kernel stack. The PIC is remapped to
+  vectors 32–47 with only IRQ0 unmasked; the PIT runs ~100 Hz and is armed
+  last — `sched::start` first drains the BIOS-latched tick while the
+  scheduler is inactive so it cannot preempt the first user instruction.
 
 See [`docs/decisions/`](docs/decisions/) for full ADRs.

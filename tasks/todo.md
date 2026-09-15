@@ -111,3 +111,23 @@ parsing (M2.2).
 
 Deferred: ring-3 execution (M2.3), demand paging + page-fault-driven
 `map_4k` (M2.4), higher-half kernel layout.
+# Mik OS x86-64 Milestone 2.3 Closeout Todo
+
+## Checkpoint: x86-64 Schedules Two Ring-3 Processes
+
+- [x] Task 1: GDT user segments + TSS (`seg.rs`), PIC remap + PIT 100 Hz
+      (`pic.rs`), 256-entry IDT with timer + `int 0x80` stubs (`isr.S`,
+      `idt.rs`)
+- [x] Task 2: `sched.rs` process table + frame-return round-robin;
+      `user.S` `int 0x80` programs; `kmain` spawns and starts the scheduler
+- [x] Fix: `PTE_U` on every page-walk level for user code (`up4[0]`);
+      drain the BIOS-latched IRQ0 before the first dispatch
+- [x] Fix: disk image grown to 128 KiB (kernel > 64 KiB) — second INT 13h
+      read in `boot16.S`
+- [x] `cargo test -p mik-os-x86` passes (`boots_in_qemu.rs` asserts `ABaA`);
+      PVH path prints identically
+- [x] ADR-007 (syscall + frame-return switch), ADR-008 (PIC/PIT tick),
+      concepts docs, ROADMAP updated
+
+Deferred: `syscall`/`sysret` fast path, LAPIC/HPET timing, IRQ1+ devices,
+user-mode fault handling (M2.4).
