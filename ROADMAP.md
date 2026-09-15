@@ -260,16 +260,78 @@ Verified by `mik-os-x86/tests/boots_in_qemu.rs` on BIOS and PVH paths.
 
 ## Phase 3: Real OS Features (Optional / Future)
 
-Once the x86-64 kernel is solid, these features can be added in any order. They are deliberately left for later because each is a large topic on its own.
+Once the x86-64 kernel is solid, these features can be added in any order — but the milestone order below follows real dependencies: drivers teach interrupt-driven I/O and PCI, which the file system and network card both build on; SMP comes last because it forces a locking audit of everything before it.
 
 ### Milestone 3.1 — Serial Console Shell (Complete)
 
 **Status:** Complete — `sys_read` (syscall 7) polls COM1's line status register and returns one byte in `rax` or `-1` when empty, and `prog_sh` runs in ring 3 as a third spawned process: it prints `mik> `, echoes unknown input, prints a version banner on `v`, and exits on `q`, yielding its slice whenever no input is pending. Deliberate simplifications: input is a polled byte stream (no IRQ4, no line buffering or line discipline), `q` leaves the shell dead permanently, and there is no way to launch programs — builtins only.
 
-- **File system:** a simple in-memory or disk-backed file system (e.g. a minimal Mik-FS).
-- **Networking:** a very basic network stack over a virtual NIC.
-- **Real device drivers:** keyboard, VGA text mode, PCI scanning.
-- **Multi-core/SMP:** bootstrap additional CPUs.
+### Milestone 3.2 — Real Device Drivers (Keyboard, VGA, PCI)
+
+**Status:** Not started.
+
+**Goal:** Replace the polled serial-only console with real interrupt-driven devices — the first hardware the kernel drives that it did not invent.
+
+- Add a PCI bus scan (config-space enumeration via ports `0xCF8`/`0xCFC`) — needed again by both the storage driver in M3.3 and the NIC in M3.4.
+- Upgrade serial input from polled to interrupt-driven: unmask UART IRQ4, add a small RX ring buffer, and make `sys_read` block (a `WAITING` process state woken by the ISR) instead of returning `-1`.
+- Add an IRQ1 PS/2 keyboard driver: scancode set-1 decoding to ASCII, feeding the same input buffer the shell reads.
+- Add VGA text-mode output (writes to `0xB8000`) so the console works without `-serial stdio`; keep COM1 as the diagnostic/debug console.
+- Add a minimal line discipline (buffer until `\n`, backspace handling) so the shell reads commands instead of raw bytes.
+
+**Acceptance criteria:**
+
+- Typing on the QEMU window keyboard produces input; output appears in the VGA window without serial.
+- `sys_read` sleeps the shell process instead of spinning (observable: B's tick rate is unaffected and the shell doesn't consume slices while idle).
+- `pci_scan` lists the QEMU devices (host bridge, ISA bridge, VGA, virtio/ATA disk, NIC) on serial.
+
+### Milestone 3.3 — File System
+
+**Status:** Not started.
+
+**Goal:** Give the kernel persistent, named storage and let the shell launch programs from it.
+
+- Add a block device driver — a virtio-blk device (PCI vendor `0x1AF4`, simplest real-hardware protocol) or a RAM disk if driver complexity should stay out of this milestone. Define the `read_block`/`write_block` interface either way.
+- Design **Mik-FS**: a minimal disk layout — superblock, flat inode table, contiguous data blocks — deliberately simpler than ext2 (no indirect blocks, fixed directory).
+- Add a thin VFS layer (`open`/`read`/`write`/`close` on file descriptors per process) so the FS details stay behind the syscall boundary.
+- Extend the shell with `ls`, `cat`, and the ability to `exec` a program stored in Mik-FS instead of only embedded `prog_*` blobs — this makes `exec` real.
+
+**Acceptance criteria:**
+
+- A file written through the syscall API survives a QEMU restart (data is on the disk image, not in RAM).
+- `ls` in the shell lists files; `cat` prints one; a program stored in Mik-FS runs in ring 3 via `exec`.
+- All existing tests still pass (the FS must not disturb the process demo).
+
+### Milestone 3.4 — Networking
+
+**Status:** Not started.
+
+**Goal:** Send and receive real Ethernet frames through a virtual NIC — the smallest honest network stack.
+
+- Add a NIC driver over the M3.2 PCI scan: QEMU's default e1000 (`0x8086:0x100E`) or virtio-net; TX/RX descriptor rings, IRQ11 interrupt delivery.
+- Implement the minimum protocol stack: Ethernet framing → ARP (answer "who has <ip>") → IPv4 (header parse/build, checksum) → UDP (sockets as port mailboxes).
+- Give processes `sys_sendto`/`sys_recvfrom` (or a net-only variant) and add shell commands `ping` (ICMP echo) and a UDP echo/print test.
+
+**Acceptance criteria:**
+
+- QEMU user-mode networking (`-netdev user`) shows the VM answering ARP and ICMP ping from the host-side gateway.
+- A UDP packet sent from the host (e.g. `nc -u`) prints in the VM; a packet sent by the VM arrives on the host.
+
+### Milestone 3.5 — Multi-Core / SMP
+
+**Status:** Not started.
+
+**Goal:** Run the scheduler on more than one CPU — the milestone that turns every "there is one current process" assumption into a real locking question.
+
+- Parse the ACPI/MP tables (or QEMU's `-smp` topology) to discover APs; add a per-CPU data region (stack, TSS, current-process pointer).
+- Implement the LAPIC + IOAPIC path (replace PIC routing; LAPIC timer per CPU) and the INIT–SIPI–SIPI AP startup dance with a real-mode trampoline page.
+- Audit shared state: the process table, frame allocator, and console need spinlocks; the scheduler becomes a shared run queue (single queue is the honest minimum).
+- Add TLB shootdown IPIs for when one CPU unmaps a page another CPU might have cached (first needed by COW/`exec` under SMP).
+
+**Acceptance criteria:**
+
+- `-smp 2` (or more) boots, both CPUs reach the scheduler, and serial shows interleaved output from processes running on different cores.
+- The COW/`exec` demo still passes under two CPUs — no stale-TLB corruption.
+- `-smp 1` still works identically (SMP is additive, not a rewrite).
 
 ## Non-Goals
 
@@ -288,7 +350,7 @@ These are deliberately out of scope to keep the project focused on understanding
 | Real page tables and the TLB behave differently than Mik-64's | High | Write small focused tests in the x86-64 kernel before enabling user mode. |
 | Multi-process context switch bugs are subtle | High | Keep the first scheduler non-preemptive until context save/restore is solid. |
 | The hand-assembly bottleneck becomes painful | Medium | Prioritize the tiny assembler as soon as user programs are needed. |
-| Scope creep into file systems / drivers | Medium | Treat Phase 3 as strictly optional until x86-64 scheduling and syscalls are complete. |
+| Scope creep into file systems / drivers | Medium | Phase 3 stays optional; do one milestone at a time and keep each shippable on its own. |
 
 ## How to Use This Roadmap
 

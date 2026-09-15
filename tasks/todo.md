@@ -184,3 +184,14 @@ filesystem, keyboard/VGA drivers, SMP, networking.
       fixed misplaced test entries
 - [x] tasks/plan.md marked historical; ideas doc got a "where this landed"
       note
+
+# Phase 3 Roadmap Expansion
+
+- [x] M3.2 real device drivers (PCI scan, IRQ1 keyboard, IRQ4 UART + blocking
+      read, VGA text, line discipline) — planned
+- [x] M3.3 file system (virtio-blk/RAM disk, Mik-FS layout, VFS + fd table,
+      shell ls/cat/exec-from-disk) — planned
+- [x] M3.4 networking (e1000/virtio-net, Ethernet/ARP/IPv4/UDP, ping + UDP
+      echo) — planned
+- [x] M3.5 SMP (ACPI/MP discovery, LAPIC/IOAPIC, INIT-SIPI-SIPI, spinlocks,
+      shared run queue, TLB shootdown IPIs) — planned
