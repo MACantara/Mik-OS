@@ -216,3 +216,27 @@ filesystem, keyboard/VGA drivers, SMP, networking.
 
 Deferred: E0-extended scancodes, wait queues when a second block reason
 exists (M3.3 disk I/O), kernel canonical tty, PCI driver attach, HW cursor.
+
+# Mik OS x86-64 Milestone 3.3 Closeout Todo
+
+## Checkpoint: File System
+
+- [x] ata.rs: polled LBA28 PIO (read/write sector, DRQ/BSY waits, FLUSH
+      CACHE), signature probe with PRESENT flag for the no-disk case
+- [x] fs.rs: Mik-FS at sector 256+ (superblock magic + bump allocator,
+      32-entry cached dir write-through, contiguous 4 KiB slots), mount
+      or format+seed (hello.txt, x)
+- [x] sched.rs: Fd table per Proc (fork inherits, exec keeps), exit ->
+      EMPTY slot reuse, ustr_ok pointer validation, syscalls 8-13,
+      exec_image refactor shared by exec/exec_file
+- [x] user.S: prog_d ('X' exec target), shell word parsing + ls/cat/run/
+      mk/w/v/q
+- [x] lib.rs: image padded to 1 MiB; PVH runner attaches the disk too
+- [x] boots_in_qemu: dual-boot — cat/run/w in boot 1, cat n in boot 2
+      proves persistence; ADcEDp intact
+- [x] ADR-014 (ATA PIO), ADR-015 (Mik-FS + fd ABI + ptr validation),
+      concepts docs, ROADMAP/AGENTS updated
+
+Deferred: space reclamation (no free list), >4KiB files, subdirectories,
+IRQ14/DMA disk I/O, virtio-blk, readdir syscall, fd inheritance edge
+cases (dup/seek).
