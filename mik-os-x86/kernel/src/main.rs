@@ -14,10 +14,13 @@ extern "C" {
     static prog_a_end: u8;
     static prog_b_start: u8;
     static prog_b_end: u8;
+    static prog_d_start: u8;
+    static prog_d_end: u8;
     static prog_sh_start: u8;
     static prog_sh_end: u8;
 }
 
+mod ata;
 mod e820;
 mod idt;
 mod input;
@@ -61,6 +64,9 @@ pub extern "C" fn kmain() -> ! {
         serial::enable_rx_irq();
         pci::scan();
         serial::write_str("gdt/tss/pic/kbd/uart ok\n");
+
+        // Block device: probe the boot disk (absent under PVH).
+        serial::write_str(if ata::init() { "ata ok\n" } else { "ata: no disk\n" });
 
         // Spawn the user processes and hand the CPU to the scheduler. The
         // deterministic sequence is "ADcEDp" (demand fault, COW child, exec,
