@@ -195,3 +195,24 @@ filesystem, keyboard/VGA drivers, SMP, networking.
       echo) — planned
 - [x] M3.5 SMP (ACPI/MP discovery, LAPIC/IOAPIC, INIT-SIPI-SIPI, spinlocks,
       shared run queue, TLB shootdown IPIs) — planned
+
+# Mik OS x86-64 Milestone 3.2 Closeout Todo
+
+## Checkpoint: Real Device Drivers
+
+- [x] Task 1: input.rs ring buffer + kbd.rs (IRQ1 set-1 decode) +
+      serial::enable_rx_irq/drain_rx/uart_handler (IRQ4 + FIFO) +
+      isr_kbd/isr_uart + IDT vectors 33/36 + PIC mask 0xE8
+- [x] Task 2: WAITING state + blocking sys_read (rip -= 2 restart) +
+      wake_on_input + IN_IDLE-gated `sti;hlt` tail in schedule()
+- [x] Task 3: vga.rs text console + sys_write COM1+VGA mirror
+- [x] Task 4: pci.rs config-space scan (all buses, multifunction aware)
+- [x] Task 5: shell line discipline in user.S (echo, Enter, backspace)
+- [x] Fix: QEMU-Windows stdio holds burst bytes host-side — timer-tick
+      `drain_rx` safety net + paced test input
+- [x] boots_in_qemu types "v\nq\n" and asserts version banner; ADcEDp intact
+- [x] ADR-012 (blocking input), ADR-013 (console drivers), concepts docs,
+      ROADMAP/AGENTS updated
+
+Deferred: E0-extended scancodes, wait queues when a second block reason
+exists (M3.3 disk I/O), kernel canonical tty, PCI driver attach, HW cursor.

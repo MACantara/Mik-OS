@@ -59,6 +59,8 @@ docs/
     why-demand-paging-fork-exec-matter.md
     x86-serial-shell.md              # UART poll, sys_read, ring-3 shell
     why-serial-shell-matters.md
+    x86-device-drivers.md            # PCI, IRQ input, blocking read, VGA
+    why-device-drivers-matter.md
   architecture.md           # System architecture overview
   decisions/
     ADR-001-vm-first.md     # Why we built a custom VM first
@@ -72,6 +74,8 @@ docs/
     ADR-009-demand-paging.md
     ADR-010-cow-fork-and-exec.md
     ADR-011-serial-shell.md
+    ADR-012-blocking-input.md
+    ADR-013-console-drivers.md
 README.md                   # Public project overview
 mik-emu/
   src/lib.rs                # Emulator library
@@ -136,13 +140,19 @@ tasks/
   frame) as a whole process context: `isr_timer`/`isr_syscall` build it,
   Rust handlers return which frame to resume, `irq_tail` + `iretq` performs
   the switch including `CR3`. Syscalls are `int 0x80` (rax=1 write,
-  2 exit, 3 yield, 4 fork, 5 exec, 6 sbrk; rdi=arg) through a DPL-3
-  interrupt gate (7=read added in M3.1: `sys_read` polls COM1's LSR and
-  returns a byte in `rax` or `-1`; `rdi`=arg where used). `TSS.rsp0` points
-  at the scheduled process's kernel stack. The PIC is remapped to vectors 32–47 with only IRQ0 unmasked; the
+  2 exit, 3 yield, 4 fork, 5 exec, 6 sbrk, 7 read; rdi=arg) through a DPL-3
+  interrupt gate. `sys_read` is **blocking**: empty input marks the proc
+  WAITING, rewinds `frame.rip` over the `int 0x80` (CD 80 = 2 bytes), and
+  a device-ISR wake replays the syscall. `TSS.rsp0` points
+  at the scheduled process's kernel stack. The PIC is remapped to vectors
+  32–47 with IRQ0 (timer), IRQ1 (keyboard), IRQ4 (UART) unmasked on the
+  master; the
   PIT runs ~100 Hz and is armed last — `sched::start` first drains the
   BIOS-latched tick while the scheduler is inactive so it cannot preempt
-  the first user instruction.
+  the first user instruction. Device input lands in a shared 64-byte ring
+  (`input.rs`); the timer also drains the UART each tick (delivery safety
+  net for missed IRQs), and an `IN_IDLE` gate drops ticks taken inside the
+  all-waiting `sti;hlt` idle loop.
 - Page faults are resumable: `isr_pf` saves GPRs first (clobbering `rsi`
   before SAVE_REGS leaks the error code into the frame), passes the code as
   arg2, and slides the iret frame over the code slot. `pf_handler`
@@ -155,9 +165,13 @@ tasks/
   a fresh table running `prog_c` and rewrites the frame — old user tables
   leak (marked).
 - The serial shell (`prog_sh` in `user.S`, spawned third; `NPROC`=4) prints
-  `mik> `, polls `sys_read`, yields when idle, and handles `v` (version),
-  `q` (exit — permanent, nothing respawns it), or echoes the byte. QEMU's
-  `-serial stdio` is bidirectional, so `boots_in_qemu.rs` writes `vq` to
-  QEMU's stdin and asserts the version banner in the output.
+  `mik> `, buffers a line in user space (echo, Enter submits \r or \n,
+  backspace erases), and handles `v` (version), `q` (exit — permanent,
+  nothing respawns it), or prints `?` for unknown commands. `sys_write`
+  mirrors to COM1 and the VGA text buffer at `0xB8000` (`vga.rs`);
+  `pci::scan()` enumerates the bus at boot. QEMU's `-serial stdio` is
+  bidirectional, so `boots_in_qemu.rs` types `v\nq\n` into QEMU's stdin
+  (paced per byte — QEMU's Windows chardev holds bursts) and asserts the
+  version banner.
 
 See [`docs/decisions/`](docs/decisions/) for full ADRs.
