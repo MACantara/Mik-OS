@@ -24,14 +24,6 @@ pub fn write_str(s: &str) {
     }
 }
 
-pub fn write_hex(v: u64) {
-    write_str("0x");
-    for i in (0..16).rev() {
-        let nibble = ((v >> (i * 4)) & 0xF) as u8;
-        write_byte(if nibble < 10 { b'0' + nibble } else { b'A' + nibble - 10 });
-    }
-}
-
 pub fn write_dec(mut v: u64) {
     let mut buf = [0u8; 20];
     let mut i = 20;

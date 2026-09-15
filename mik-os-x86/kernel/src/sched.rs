@@ -55,6 +55,9 @@ static mut PROCS: [Proc; NPROC] = [
     Proc { pml4: 0, kstack_top: 0, frame: core::ptr::null_mut(), state: EMPTY },
 ];
 static mut CUR: usize = 0;
+/// Gates timer work: ticks arriving before start() (e.g. the IRQ0 the BIOS
+/// PIT leaves latched from boot) are EOI'd and dropped, not scheduled.
+static mut SCHED_ACTIVE: bool = false;
 
 const USER_CODE_VA: u64 = 0x4000_0000;
 const USER_STACK_VA: u64 = 0x4000_1000; // one page; rsp starts at its top
@@ -134,11 +137,17 @@ unsafe fn schedule(frame: *mut IrqFrame) -> *mut IrqFrame {
 }
 
 /// IRQ0: acknowledge the PIC, then treat the tick as an involuntary yield.
+/// Before start() arms the scheduler, a tick is acknowledged and dropped —
+/// a pre-boot IRQ0 can sit latched in the PIC and fire on the first unmask.
 #[no_mangle]
 extern "C" fn timer_handler(frame: *mut IrqFrame) -> *mut IrqFrame {
     unsafe {
         pic::eoi();
-        schedule(frame)
+        if !core::ptr::addr_of!(SCHED_ACTIVE).read() {
+            frame
+        } else {
+            schedule(frame)
+        }
     }
 }
 
@@ -168,5 +177,11 @@ pub unsafe fn start() -> ! {
     *core::ptr::addr_of_mut!(CUR) = first;
     seg::set_rsp0(procs[first].kstack_top);
     mem::switch_cr3(procs[first].pml4);
+    // Drain any IRQ0 latched during boot (BIOS leaves the PIT ticking at
+    // ~18.2 Hz): unmask long enough for it to deliver, the inactive-gate
+    // tick handler EOI's and drops it, then re-mask. Without this it would
+    // preempt the very first user instruction.
+    core::arch::asm!("sti; nop; nop; nop; cli", options(nomem, nostack));
+    *core::ptr::addr_of_mut!(SCHED_ACTIVE) = true;
     enter_user(procs[first].frame)
 }

@@ -20,12 +20,11 @@ pub struct Tss {
     iopb: u16,
 }
 
-// Selectors: index*8 | RPL. Ring 3 needs RPL=3 on its CS/SS.
-pub const KCODE: u16 = 0x08;
-pub const KDATA: u16 = 0x10;
+// Selectors: index*8 | RPL. Ring 3 needs RPL=3 on its CS/SS; the kernel
+// selectors (0x08/0x10) and the TSS selector (0x28, index 5) are baked into
+// the assembly that uses them.
 pub const UDATA: u16 = 0x18 | 3; // -> 0x1B
 pub const UCODE: u16 = 0x20 | 3; // -> 0x23
-const TSS_SEL: u16 = 0x28; // index 5
 
 static mut TSS: Tss = unsafe { core::mem::zeroed() };
 // null, kcode, kdata, udata(DPL3), ucode(DPL3), TSS low, TSS high.

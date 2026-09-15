@@ -1,14 +1,38 @@
-// Tiny first user program: print 'U' on COM1 and return. It is position-
-// independent — only immediate operands and ret — so it runs at whatever
-// virtual address the kernel maps it to. The kernel copies these bytes into
-// a freshly allocated frame and maps that frame with PTE_U.
+// First user programs. Both are position-independent (immediates only) and
+// use the int 0x80 syscall ABI: rax = number (1 write_char, 2 exit, 3
+// yield), rdi = arg.
 
 .section .rodata, "a"
-.global user_prog_start
-.global user_prog_end
-user_prog_start:
-    mov al, 'U'
-    mov dx, 0x3F8
-    out dx, al
-    ret
-user_prog_end:
+
+// prog A: 'A', yield, 'a', yield, 'A', exit.
+.global prog_a_start
+.global prog_a_end
+prog_a_start:
+    mov eax, 1
+    mov edi, 'A'
+    int 0x80
+    mov eax, 3
+    int 0x80
+    mov eax, 1
+    mov edi, 'a'
+    int 0x80
+    mov eax, 3
+    int 0x80
+    mov eax, 1
+    mov edi, 'A'
+    int 0x80
+    mov eax, 2
+    int 0x80
+1:  jmp 1b                  // unreachable if exit works
+prog_a_end:
+
+// prog B: 'B' once, then spin forever — it never yields, so only the timer
+// interrupt can move the CPU off it.
+.global prog_b_start
+.global prog_b_end
+prog_b_start:
+    mov eax, 1
+    mov edi, 'B'
+    int 0x80
+2:  jmp 2b
+prog_b_end:

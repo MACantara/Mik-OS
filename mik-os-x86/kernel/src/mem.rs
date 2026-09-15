@@ -89,12 +89,6 @@ pub unsafe fn extend_identity_map() {
     core::arch::asm!("mov cr3, {}", in(reg) core::ptr::addr_of!(pml4) as u64);
 }
 
-/// Physical address of the kernel PML4 (identity map). Equals its virtual
-/// address because the identity map is 1:1.
-pub fn kernel_pml4() -> u64 {
-    unsafe { core::ptr::addr_of!(pml4) as u64 }
-}
-
 /// Load `p4` (physical address of a PML4) into CR3 — the x86-64 context
 /// switch for address spaces. Also flushes the TLB (no PCID in use).
 pub unsafe fn switch_cr3(p4: u64) {
@@ -125,12 +119,17 @@ pub unsafe fn map_4k(p4: *mut u64, va: u64, pa: u64, flags: u64) {
 /// working after the switch) while PDPT slot 1 points at private user tables
 /// covering 0x40000000..0x80000000. This is the Mik-64 shape on real
 /// hardware: shared kernel mappings, private user region.
+///
+/// PTE_U semantics: ring 3 may cross a level only if that level's entry has
+/// U set. `up4[0]` carries U because user pages hang under it; `updpt[0]`
+/// (the shared kernel PD) does NOT — so user mode still can't touch kernel
+/// memory even though it shares the table.
 pub unsafe fn build_user_table() -> u64 {
     let up4 = alloc_frame().expect("out of frames for pml4");
     let updpt = alloc_frame().expect("out of frames for pdpt");
     core::ptr::write_bytes(up4 as *mut u8, 0, 4096);
     core::ptr::write_bytes(updpt as *mut u8, 0, 4096);
-    *(up4 as *mut u64) = updpt | PTE_P | PTE_W;
+    *(up4 as *mut u64) = updpt | PTE_P | PTE_W | PTE_U;
     *(updpt as *mut u64) = core::ptr::addr_of!(pd) as u64 | PTE_P | PTE_W;
     up4
 }
