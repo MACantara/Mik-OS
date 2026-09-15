@@ -31,6 +31,11 @@ cargo test
 # Manual steps
 cargo run -p mik-os -- target/mik-64-kernel.bin
 cargo run -p mik-emu -- target/mik-64-kernel.bin
+
+# x86-64 kernel (Milestone 2.1): needs the bare-metal target and QEMU
+rustup target add x86_64-unknown-none
+cargo run -p mik-os-x86 -- qemu
+# `mik-os-x86` finds QEMU via $QEMU, then PATH, then C:\Program Files\qemu.
 ```
 
 ## Project Layout
