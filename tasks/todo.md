@@ -71,3 +71,24 @@
 - [x] ROADMAP.md is updated to show Phase 1 complete
 
 Deferred: COW `fork`, pseudo file system / `READ` syscall.
+
+# Mik OS x86-64 Milestone 2.1 Closeout Todo
+
+## Checkpoint: x86-64 Boots from a Real Disk Image
+
+- [x] Task 1: `.boot16` boot sector — INT 13h image load, A20, protected mode
+- [x] Task 2: `.stage2` loader — copy flat kernel to `0x400000`, zero `.bss`,
+      enter `_start` under the PVH-equivalent contract
+- [x] Task 3: ELF section extraction + 64 KiB disk-image builder in
+      `mik-os-x86` (`KEEP()` boot sections in `link.x`)
+- [x] Task 4: Minimal IDT — 32 exception stubs, `EXnn` print-and-halt, `int3`
+      demo in `kmain`
+- [x] `cargo test -p mik-os-x86` passes (`disk_image.rs`,
+      `boots_in_qemu.rs`)
+- [x] QEMU BIOS boot prints `Mik-64 -> x86-64 long mode` + `EX03`; PVH path
+      still works
+- [x] ADR-003 (BIOS disk boot), ADR-004 (minimal IDT), concepts docs, ROADMAP
+      updated
+
+Deferred: resumable interrupt stubs, PIC/APIC IRQ plumbing (M2.3), memory-map
+parsing (M2.2).

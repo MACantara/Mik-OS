@@ -34,7 +34,9 @@ cargo run -p mik-emu -- target/mik-64-kernel.bin
 
 # x86-64 kernel (Milestone 2.1): needs the bare-metal target and QEMU
 rustup target add x86_64-unknown-none
-cargo run -p mik-os-x86 -- qemu
+cargo run -p mik-os-x86 -- qemu   # BIOS disk image: boot16 -> stage2 -> kernel
+cargo run -p mik-os-x86 -- pvh    # QEMU -kernel direct-boot comparison path
+cargo run -p mik-os-x86 -- image  # build target/mik-os-x86.img only
 # `mik-os-x86` finds QEMU via $QEMU, then PATH, then C:\Program Files\qemu.
 ```
 
@@ -46,10 +48,15 @@ docs/
     mik-os-vm-first.md      # Why and how we chose the VM-first approach
   specs/
     mik-64.md               # Complete Mik-64 machine specification
+  concepts/
+    x86-boot-and-idt.md     # BIOS boot chain, long-mode transition, IDT
+    why-x86-boot-and-idt-matter.md
   architecture.md           # System architecture overview
   decisions/
     ADR-001-vm-first.md     # Why we built a custom VM first
     ADR-002-flat-memory-and-hand-assembly.md
+    ADR-003-bios-disk-boot.md
+    ADR-004-minimal-idt.md
 README.md                   # Public project overview
 mik-emu/
   src/lib.rs                # Emulator library
@@ -87,5 +94,11 @@ tasks/
 - User programs run at VA `0x800000` (PD index 4, per-process PT4); the demand
   region `0x800000`..`0xA00000` is paged in on fault. Syscalls: 0 halt,
   1 `print_char`, 2 `fork`, 3 `exec`, 4 `yield`, 5 `exit`.
+- The x86-64 kernel ELF carries three payloads: `.boot16` (512-byte boot
+  sector at `0x7C00`, kernel length patched at `0x1F8`), `.stage2` (32-bit
+  loader at `0x7E00`), and the kernel at `0x400000`. `mik-os-x86`'s image
+  builder packs them into a 64 KiB disk image; stage2 reproduces the PVH
+  handoff so `_start` is shared. A 32-entry exception IDT prints `EXnn` and
+  halts; `kmain` proves it with `int3`.
 
 See [`docs/decisions/`](docs/decisions/) for full ADRs.
