@@ -51,12 +51,16 @@ docs/
   concepts/
     x86-boot-and-idt.md     # BIOS boot chain, long-mode transition, IDT
     why-x86-boot-and-idt-matter.md
+    x86-memory-management.md # E820, free-list allocator, paging, CR3
+    why-x86-memory-matters.md
   architecture.md           # System architecture overview
   decisions/
     ADR-001-vm-first.md     # Why we built a custom VM first
     ADR-002-flat-memory-and-hand-assembly.md
     ADR-003-bios-disk-boot.md
     ADR-004-minimal-idt.md
+    ADR-005-e820-memory-map.md
+    ADR-006-address-space-sharing.md
 README.md                   # Public project overview
 mik-emu/
   src/lib.rs                # Emulator library
@@ -99,6 +103,14 @@ tasks/
   loader at `0x7E00`), and the kernel at `0x400000`. `mik-os-x86`'s image
   builder packs them into a 64 KiB disk image; stage2 reproduces the PVH
   handoff so `_start` is shared. A 32-entry exception IDT prints `EXnn` and
-  halts; `kmain` proves it with `int3`.
+  halts; `kmain` proves it with `int3` (runs last — it never returns).
+- The boot sector collects the E820 memory map into phys `0x5000` (magic
+  `'MMAP'`, u32 count, 24-byte entries); `e820.rs` parses it, with a
+  synthetic fallback for the PVH path. `mem.rs` free-lists usable frames
+  (excluding <1 MiB and the kernel image `0x400000..__bss_end`), extends the
+  `.bss` PD to a 1 GiB identity map, and builds per-space PML4s that share
+  the kernel PD at PDPT[0] with private user pages at `0x40000000`+.
+  Ordering matters: `extend_identity_map` must run before `mem::init`
+  because free-list seeding writes into every frame.
 
 See [`docs/decisions/`](docs/decisions/) for full ADRs.
