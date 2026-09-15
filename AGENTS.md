@@ -57,6 +57,8 @@ docs/
     why-interrupts-and-scheduling-matter.md
     x86-demand-paging-fork-exec.md   # pf error code, sbrk/brk, COW, exec
     why-demand-paging-fork-exec-matter.md
+    x86-serial-shell.md              # UART poll, sys_read, ring-3 shell
+    why-serial-shell-matters.md
   architecture.md           # System architecture overview
   decisions/
     ADR-001-vm-first.md     # Why we built a custom VM first
@@ -69,6 +71,7 @@ docs/
     ADR-008-pic-pit-timer.md
     ADR-009-demand-paging.md
     ADR-010-cow-fork-and-exec.md
+    ADR-011-serial-shell.md
 README.md                   # Public project overview
 mik-emu/
   src/lib.rs                # Emulator library
@@ -128,8 +131,9 @@ tasks/
   Rust handlers return which frame to resume, `irq_tail` + `iretq` performs
   the switch including `CR3`. Syscalls are `int 0x80` (rax=1 write,
   2 exit, 3 yield, 4 fork, 5 exec, 6 sbrk; rdi=arg) through a DPL-3
-  interrupt gate. `TSS.rsp0` points at the scheduled process's kernel
-  stack. The PIC is remapped to vectors 32–47 with only IRQ0 unmasked; the
+  interrupt gate (7=read added in M3.1: `sys_read` polls COM1's LSR and
+  returns a byte in `rax` or `-1`; `rdi`=arg where used). `TSS.rsp0` points
+  at the scheduled process's kernel stack. The PIC is remapped to vectors 32–47 with only IRQ0 unmasked; the
   PIT runs ~100 Hz and is armed last — `sched::start` first drains the
   BIOS-latched tick while the scheduler is inactive so it cannot preempt
   the first user instruction.
@@ -144,5 +148,10 @@ tasks/
   (no refcount) and copies the live frame with rax=0; `sys_exec` swaps in
   a fresh table running `prog_c` and rewrites the frame — old user tables
   leak (marked).
+- The serial shell (`prog_sh` in `user.S`, spawned third; `NPROC`=4) prints
+  `mik> `, polls `sys_read`, yields when idle, and handles `v` (version),
+  `q` (exit — permanent, nothing respawns it), or echoes the byte. QEMU's
+  `-serial stdio` is bidirectional, so `boots_in_qemu.rs` writes `vq` to
+  QEMU's stdin and asserts the version banner in the output.
 
 See [`docs/decisions/`](docs/decisions/) for full ADRs.
