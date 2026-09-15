@@ -20,11 +20,15 @@ extern "C" {
 
 mod e820;
 mod idt;
+mod input;
+mod kbd;
 mod mem;
+mod pci;
 mod pic;
 mod sched;
 mod seg;
 mod serial;
+mod vga;
 
 #[no_mangle]
 pub extern "C" fn kmain() -> ! {
@@ -54,7 +58,9 @@ pub extern "C" fn kmain() -> ! {
         // fires yet — IF stays clear until the first iretq into user mode.
         seg::init();
         pic::init_pic();
-        serial::write_str("gdt/tss/pic ok\n");
+        serial::enable_rx_irq();
+        pci::scan();
+        serial::write_str("gdt/tss/pic/kbd/uart ok\n");
 
         // Spawn the user processes and hand the CPU to the scheduler. The
         // deterministic sequence is "ADcEDp" (demand fault, COW child, exec,

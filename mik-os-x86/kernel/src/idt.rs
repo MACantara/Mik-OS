@@ -36,12 +36,16 @@ struct IdtPtr {
 extern "C" {
     static isr_table: [u64; 32];
     fn isr_timer();
+    fn isr_kbd();
+    fn isr_uart();
     fn isr_syscall();
 }
 
 const GATE_INT: u8 = 0x8E; // present, DPL 0, 64-bit interrupt gate
 const GATE_INT_USER: u8 = 0xEE; // present, DPL 3, 64-bit interrupt gate
 const TIMER_VEC: usize = 32; // IRQ0 after PIC remap
+const KBD_VEC: usize = 33;   // IRQ1
+const UART_VEC: usize = 36;  // IRQ4
 const SYSCALL_VEC: usize = 0x80;
 
 static mut IDT: [IdtEntry; 256] = [IdtEntry::new(0, 0); 256];
@@ -57,6 +61,8 @@ pub unsafe fn init() {
         *entry = IdtEntry::new(isr_table[i], GATE_INT);
     }
     (*idt)[TIMER_VEC] = IdtEntry::new(isr_timer as *const () as u64, GATE_INT);
+    (*idt)[KBD_VEC] = IdtEntry::new(isr_kbd as *const () as u64, GATE_INT);
+    (*idt)[UART_VEC] = IdtEntry::new(isr_uart as *const () as u64, GATE_INT);
     (*idt)[SYSCALL_VEC] = IdtEntry::new(isr_syscall as *const () as u64, GATE_INT_USER);
     let ptr = IdtPtr {
         limit: (core::mem::size_of_val(&*idt) - 1) as u16,

@@ -168,6 +168,26 @@ isr_syscall:
     mov rsp, rax
     jmp irq_tail
 
+// Input devices: keyboard IRQ1 (vector 33) and UART RX IRQ4 (vector 36).
+// Same frame contract; the Rust handlers push bytes into the input buffer,
+// wake blocked readers, EOI, and return this frame — scheduling is left to
+// the timer.
+.global isr_kbd
+isr_kbd:
+    SAVE_REGS
+    mov rdi, rsp
+    call kbd_handler
+    mov rsp, rax
+    jmp irq_tail
+
+.global isr_uart
+isr_uart:
+    SAVE_REGS
+    mov rdi, rsp
+    call uart_handler
+    mov rsp, rax
+    jmp irq_tail
+
 // Page fault (vector 14): the CPU pushes an error code between the iret
 // frame and where SAVE_REGS lands. Save first so the frame keeps the real
 // GPRs (writing rsi early would corrupt the frame's rsi — the retry would

@@ -30,7 +30,7 @@ pub unsafe fn init_pic() {
     outb(PIC1_DATA, 0x01); // ICW4: 8086 mode
     outb(PIC2_DATA, 0x01);
     let _ = inb(PIC1_DATA); // settle
-    outb(PIC1_DATA, 0xFE); // unmask IRQ0 only
+    outb(PIC1_DATA, 0xE8); // unmask IRQ0 (timer), IRQ1 (kbd), IRQ4 (uart)
     outb(PIC2_DATA, 0xFF); // mask all slave lines
 }
 
