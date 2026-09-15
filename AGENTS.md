@@ -55,6 +55,8 @@ docs/
     why-x86-memory-matters.md
     x86-interrupts-and-scheduling.md # GDT/TSS, iret frame, PIC/PIT, sched
     why-interrupts-and-scheduling-matter.md
+    x86-demand-paging-fork-exec.md   # pf error code, sbrk/brk, COW, exec
+    why-demand-paging-fork-exec-matter.md
   architecture.md           # System architecture overview
   decisions/
     ADR-001-vm-first.md     # Why we built a custom VM first
@@ -65,6 +67,8 @@ docs/
     ADR-006-address-space-sharing.md
     ADR-007-syscall-and-context-switch.md
     ADR-008-pic-pit-timer.md
+    ADR-009-demand-paging.md
+    ADR-010-cow-fork-and-exec.md
 README.md                   # Public project overview
 mik-emu/
   src/lib.rs                # Emulator library
@@ -123,10 +127,22 @@ tasks/
   frame) as a whole process context: `isr_timer`/`isr_syscall` build it,
   Rust handlers return which frame to resume, `irq_tail` + `iretq` performs
   the switch including `CR3`. Syscalls are `int 0x80` (rax=1 write,
-  2 exit, 3 yield; rdi=arg) through a DPL-3 interrupt gate. `TSS.rsp0`
-  points at the scheduled process's kernel stack. The PIC is remapped to
-  vectors 32–47 with only IRQ0 unmasked; the PIT runs ~100 Hz and is armed
-  last — `sched::start` first drains the BIOS-latched tick while the
-  scheduler is inactive so it cannot preempt the first user instruction.
+  2 exit, 3 yield, 4 fork, 5 exec, 6 sbrk; rdi=arg) through a DPL-3
+  interrupt gate. `TSS.rsp0` points at the scheduled process's kernel
+  stack. The PIC is remapped to vectors 32–47 with only IRQ0 unmasked; the
+  PIT runs ~100 Hz and is armed last — `sched::start` first drains the
+  BIOS-latched tick while the scheduler is inactive so it cannot preempt
+  the first user instruction.
+- Page faults are resumable: `isr_pf` saves GPRs first (clobbering `rsi`
+  before SAVE_REGS leaks the error code into the frame), passes the code as
+  arg2, and slides the iret frame over the code slot. `pf_handler`
+  demand-maps not-present faults in `[0x40002000, brk)` (`sys_sbrk` only
+  moves `brk`) and COW-copies present+write faults on `P|U|!W` leaves in
+  the private region `0x40000000..0x80000000` — `invlpg` after each fix;
+  other faults print `EX0E` + `cr2`/`err`/`rip` and halt. `sys_fork`
+  clones the user PD/PT chain sharing leaf frames read-only on both sides
+  (no refcount) and copies the live frame with rax=0; `sys_exec` swaps in
+  a fresh table running `prog_c` and rewrites the frame — old user tables
+  leak (marked).
 
 See [`docs/decisions/`](docs/decisions/) for full ADRs.

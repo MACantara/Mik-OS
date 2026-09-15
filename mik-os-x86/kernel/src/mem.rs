@@ -114,6 +114,21 @@ pub unsafe fn map_4k(p4: *mut u64, va: u64, pa: u64, flags: u64) {
     *table.add((va >> 12) as usize & 0x1FF) = pa | flags;
 }
 
+/// Walk `p4` to the leaf PTE for `va` without allocating anything. Returns a
+/// raw pointer to the PTE, or null if any intermediate level is missing.
+/// Used by the page-fault handler to inspect the faulting page's flags.
+pub unsafe fn find_pte(p4: *const u64, va: u64) -> *mut u64 {
+    let mut table = p4;
+    for shift in [39u32, 30, 21] {
+        let e = *table.add((va >> shift) as usize & 0x1FF);
+        if e & PTE_P == 0 {
+            return core::ptr::null_mut();
+        }
+        table = (e & !0xFFF) as *const u64;
+    }
+    table.add((va >> 12) as usize & 0x1FF) as *mut u64
+}
+
 /// Build a second address space: a fresh PML4 whose PDPT shares the kernel's
 /// identity PD (low 1 GiB — kernel code, stack, and allocator all keep
 /// working after the switch) while PDPT slot 1 points at private user tables
@@ -132,4 +147,42 @@ pub unsafe fn build_user_table() -> u64 {
     *(up4 as *mut u64) = updpt | PTE_P | PTE_W | PTE_U;
     *(updpt as *mut u64) = core::ptr::addr_of!(pd) as u64 | PTE_P | PTE_W;
     up4
+}
+
+/// Clone a user address space for `fork`: fresh PML4/PDPT/PD/PT frames whose
+/// leaf PTEs point at the *same* physical frames as the parent's, with the
+/// write bit cleared on BOTH sides. The first write by either process takes
+/// a copy-on-write fault and gets a private copy — pages that are only read
+/// stay shared forever. The kernel PD stays shared (supervisor-only).
+///
+/// Caller must flush the parent's TLB afterwards (reload its CR3) or the
+/// parent could still write through its now-stale writable translation.
+pub unsafe fn clone_user_table(parent: *mut u64) -> u64 {
+    let child = build_user_table();
+    let p_pdpt = (*parent & !0xFFF) as *mut u64;            // parent pml4[0]
+    let c_pdpt = (*(child as *mut u64) & !0xFFF) as *mut u64; // child pml4[0]
+    let p_upd = (*p_pdpt.add(1) & !0xFFF) as *mut u64;      // parent private PD
+    let c_upd = alloc_frame().expect("out of frames for fork pd") as *mut u64;
+    core::ptr::write_bytes(c_upd as *mut u8, 0, 4096);
+    *c_pdpt.add(1) = c_upd as u64 | PTE_P | PTE_W | PTE_U;
+    for i in 0..512 {
+        let pde = *p_upd.add(i);
+        if pde & PTE_P == 0 {
+            continue;
+        }
+        let p_pt = (pde & !0xFFF) as *mut u64;
+        let c_pt = alloc_frame().expect("out of frames for fork pt") as *mut u64;
+        core::ptr::write_bytes(c_pt as *mut u8, 0, 4096);
+        *c_upd.add(i) = c_pt as u64 | PTE_P | PTE_W | PTE_U;
+        for j in 0..512 {
+            let pte = *p_pt.add(j);
+            if pte & PTE_P == 0 {
+                continue;
+            }
+            let shared_ro = pte & !PTE_W; // same frame, read-only both sides
+            *p_pt.add(j) = shared_ro;
+            *c_pt.add(j) = shared_ro;
+        }
+    }
+    child
 }

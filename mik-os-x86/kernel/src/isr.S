@@ -30,7 +30,7 @@ isr_table:
     .quad isr_11
     .quad isr_12
     .quad isr_13
-    .quad isr_14
+    .quad isr_pf
     .quad isr_15
     .quad isr_16
     .quad isr_17
@@ -63,7 +63,6 @@ isr_table:
     ISR 11
     ISR 12
     ISR 13
-    ISR 14
     ISR 15
     ISR 16
     ISR 17
@@ -166,6 +165,31 @@ isr_syscall:
     SAVE_REGS
     mov rdi, rsp
     call syscall_handler
+    mov rsp, rax
+    jmp irq_tail
+
+// Page fault (vector 14): the CPU pushes an error code between the iret
+// frame and where SAVE_REGS lands. Save first so the frame keeps the real
+// GPRs (writing rsi early would corrupt the frame's rsi — the retry would
+// inherit the error code as a pointer). Then read the code at [rsp+120]
+// into rsi (arg2 for pf_handler) and slide the five iret words down over
+// the code slot, leaving the standard IrqFrame shape for irq_tail.
+.global isr_pf
+isr_pf:
+    SAVE_REGS
+    mov rsi, [rsp+120]         // error code -> arg2
+    mov rax, [rsp+128]         // rip
+    mov [rsp+120], rax
+    mov rax, [rsp+136]         // cs
+    mov [rsp+128], rax
+    mov rax, [rsp+144]         // rflags
+    mov [rsp+136], rax
+    mov rax, [rsp+152]         // rsp
+    mov [rsp+144], rax
+    mov rax, [rsp+160]         // ss
+    mov [rsp+152], rax
+    mov rdi, rsp               // rsp still points at r15 — frame complete
+    call pf_handler
     mov rsp, rax
     jmp irq_tail
 

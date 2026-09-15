@@ -131,3 +131,25 @@ Deferred: ring-3 execution (M2.3), demand paging + page-fault-driven
 
 Deferred: `syscall`/`sysret` fast path, LAPIC/HPET timing, IRQ1+ devices,
 user-mode fault handling (M2.4).
+
+# Mik OS x86-64 Milestone 2.4 Closeout Todo
+
+## Checkpoint: x86-64 Reproduces the Mik-64 Process Model
+
+- [x] Task 1: Resumable `isr_pf` (error code -> arg2, iret frame slid over
+      the code slot) + `pf_handler` demand-maps `[USER_DATA_VA, brk)`;
+      `sys_sbrk` (6) advances `brk` lazily; `mem::find_pte` non-allocating
+      walk
+- [x] Task 2: `mem::clone_user_table` + `sys_fork` (4) — COW leaf sharing,
+      child frame copy with rax=0, parent CR3 reload
+- [x] Task 3: `sys_exec` (5) — fresh table + `prog_c`, in-place frame
+      rewrite, immediate `switch_cr3`
+- [x] Fix: `isr_pf` must SAVE_REGS before reading the error code — clobbered
+      rsi leaked into the frame and the retry inherited it as a pointer
+- [x] `cargo test -p mik-os-x86` passes (`boots_in_qemu.rs` strips 'B' and
+      asserts `ADcEDp`); PVH path identical
+- [x] ADR-009 (demand paging + lazy sbrk), ADR-010 (COW fork + exec),
+      concepts docs, ROADMAP/AGENTS updated
+
+Deferred: process-kill on unhandled fault (EX0E still halts), frame/table
+reclamation on exec+exit, refcounted COW sharing, multi-page stacks.
