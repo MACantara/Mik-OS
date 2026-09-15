@@ -4,25 +4,34 @@
 
 .section .rodata, "a"
 
-// prog A: 'A', yield, 'a', yield, 'A', exit.
+// prog A: 'A', sbrk a heap page, store+read 'D' on it (demand fault),
+// yield, 'a', yield, 'A', exit. rsi = heap base for the whole program.
 .global prog_a_start
 .global prog_a_end
 prog_a_start:
     mov eax, 1
     mov edi, 'A'
     int 0x80
-    mov eax, 3
+    mov eax, 6                  // sbrk(0x1000) -> rax = old brk
+    mov edi, 0x1000
     int 0x80
+    mov rsi, rax                // rsi = heap base (0x40002000)
+    mov byte ptr [rsi], 'D'     // demand page fault -> map + retry
+    mov eax, 1
+    movzx edi, byte ptr [rsi]
+    int 0x80                    // 'D'
+    mov eax, 3
+    int 0x80                    // yield
     mov eax, 1
     mov edi, 'a'
     int 0x80
     mov eax, 3
-    int 0x80
+    int 0x80                    // yield
     mov eax, 1
     mov edi, 'A'
     int 0x80
     mov eax, 2
-    int 0x80
+    int 0x80                    // exit
 1:  jmp 1b                  // unreachable if exit works
 prog_a_end:
 

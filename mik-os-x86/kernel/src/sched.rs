@@ -47,12 +47,15 @@ pub struct Proc {
     kstack_top: u64,
     frame: *mut IrqFrame,
     state: u8,
+    /// Lazily-mapped heap ceiling: [USER_DATA_VA, brk) is demand-paged.
+    brk: u64,
 }
 
-const NPROC: usize = 2;
+const NPROC: usize = 3;
 static mut PROCS: [Proc; NPROC] = [
-    Proc { pml4: 0, kstack_top: 0, frame: core::ptr::null_mut(), state: EMPTY },
-    Proc { pml4: 0, kstack_top: 0, frame: core::ptr::null_mut(), state: EMPTY },
+    Proc { pml4: 0, kstack_top: 0, frame: core::ptr::null_mut(), state: EMPTY, brk: 0 },
+    Proc { pml4: 0, kstack_top: 0, frame: core::ptr::null_mut(), state: EMPTY, brk: 0 },
+    Proc { pml4: 0, kstack_top: 0, frame: core::ptr::null_mut(), state: EMPTY, brk: 0 },
 ];
 static mut CUR: usize = 0;
 /// Gates timer work: ticks arriving before start() (e.g. the IRQ0 the BIOS
@@ -61,6 +64,8 @@ static mut SCHED_ACTIVE: bool = false;
 
 const USER_CODE_VA: u64 = 0x4000_0000;
 const USER_STACK_VA: u64 = 0x4000_1000; // one page; rsp starts at its top
+const USER_DATA_VA: u64 = 0x4000_2000;  // heap base; [base, brk) demand-paged
+const BRK_MAX: u64 = USER_DATA_VA + 0x1_0000; // 64 KiB cap on sbrk growth
 
 extern "C" {
     fn enter_user(frame: *mut IrqFrame) -> !;
@@ -106,7 +111,7 @@ pub unsafe fn spawn(code: &[u8]) {
         rsp: USER_STACK_VA + 0x1000,
         ss: seg::UDATA as u64,
     });
-    procs[i] = Proc { pml4, kstack_top, frame: fp, state: READY };
+    procs[i] = Proc { pml4, kstack_top, frame: fp, state: READY, brk: USER_DATA_VA };
 }
 
 /// Save `frame` into the current process, pick the next READY process
@@ -151,8 +156,10 @@ extern "C" fn timer_handler(frame: *mut IrqFrame) -> *mut IrqFrame {
     }
 }
 
-/// Syscall ABI: rax = number (1 write_char, 2 exit, 3 yield), rdi = arg.
-/// write_char resumes the same frame; exit/yield return the next process's.
+/// Syscall ABI: rax = number (1 write_char, 2 exit, 3 yield, 4 fork,
+/// 5 exec, 6 sbrk), rdi = arg. write/sbrk resume the same frame; the others
+/// may return a different process's frame (yield/exit/fork scheduling) or a
+/// rewritten one (exec).
 #[no_mangle]
 unsafe extern "C" fn syscall_handler(frame: *mut IrqFrame) -> *mut IrqFrame {
     let f = &mut *frame;
@@ -166,7 +173,61 @@ unsafe extern "C" fn syscall_handler(frame: *mut IrqFrame) -> *mut IrqFrame {
             schedule(frame)
         }
         3 => schedule(frame),
+        6 => {
+            // sbrk: lazily grow the demand region — no pages are mapped yet;
+            // the first touch of each page faults and pf_handler maps it.
+            let p = &mut (*core::ptr::addr_of_mut!(PROCS))[*core::ptr::addr_of!(CUR)];
+            let inc = (f.rdi + 0xFFF) & !0xFFF;
+            f.rax = p.brk;
+            if p.brk + inc <= BRK_MAX {
+                p.brk += inc;
+            }
+            frame
+        }
         _ => frame,
+    }
+}
+
+/// Page fault (vector 14): `isr_pf` hands over the iret frame and the CPU
+/// error code (err bit0 = page present, bit1 = write access, bit2 = user
+/// mode). A not-present fault inside [USER_DATA_VA, brk) is demand paging:
+/// allocate a frame, map it U|W, invlpg, and retry the faulting instruction.
+/// Anything else still prints EX0E and halts.
+#[no_mangle]
+extern "C" fn pf_handler(frame: *mut IrqFrame, err: u64) -> *mut IrqFrame {
+    unsafe {
+        let cr2: u64;
+        core::arch::asm!("mov {}, cr2", out(reg) cr2);
+        let procs = &mut *core::ptr::addr_of_mut!(PROCS);
+        let cur = *core::ptr::addr_of!(CUR);
+        if err & 1 == 0 && cr2 >= USER_DATA_VA && cr2 < procs[cur].brk {
+            let page = cr2 & !0xFFF;
+            let fr = mem::alloc_frame().expect("out of frames for demand page");
+            core::ptr::write_bytes(fr as *mut u8, 0, 4096);
+            mem::map_4k(
+                procs[cur].pml4 as *mut u64,
+                page,
+                fr,
+                mem::PTE_P | mem::PTE_W | mem::PTE_U,
+            );
+            core::arch::asm!("invlpg [{}]", in(reg) page, options(nostack));
+            return frame;
+        }
+        let f = &*frame;
+        serial::write_str("EX0E cr2=");
+        serial::write_hex(cr2);
+        serial::write_str(" err=");
+        serial::write_hex(err);
+        serial::write_str(" rip=");
+        serial::write_hex(f.rip);
+        serial::write_str(" rsi=");
+        serial::write_hex(f.rsi);
+        serial::write_str(" rax=");
+        serial::write_hex(f.rax);
+        serial::write_str("\n");
+        loop {
+            core::arch::asm!("cli; hlt");
+        }
     }
 }
 

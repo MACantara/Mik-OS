@@ -114,6 +114,21 @@ pub unsafe fn map_4k(p4: *mut u64, va: u64, pa: u64, flags: u64) {
     *table.add((va >> 12) as usize & 0x1FF) = pa | flags;
 }
 
+/// Walk `p4` to the leaf PTE for `va` without allocating anything. Returns a
+/// raw pointer to the PTE, or null if any intermediate level is missing.
+/// Used by the page-fault handler to inspect the faulting page's flags.
+pub unsafe fn find_pte(p4: *const u64, va: u64) -> *mut u64 {
+    let mut table = p4;
+    for shift in [39u32, 30, 21] {
+        let e = *table.add((va >> shift) as usize & 0x1FF);
+        if e & PTE_P == 0 {
+            return core::ptr::null_mut();
+        }
+        table = (e & !0xFFF) as *const u64;
+    }
+    table.add((va >> 12) as usize & 0x1FF) as *mut u64
+}
+
 /// Build a second address space: a fresh PML4 whose PDPT shares the kernel's
 /// identity PD (low 1 GiB — kernel code, stack, and allocator all keep
 /// working after the switch) while PDPT slot 1 points at private user tables
