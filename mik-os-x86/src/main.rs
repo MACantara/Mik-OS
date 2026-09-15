@@ -70,11 +70,15 @@ fn run_disk() {
 
 fn run_pvh() {
     build_kernel();
+    let img = write_image();
     let elf = kernel_elf();
     let qemu = find_qemu();
     let mut cmd = Command::new(qemu);
     cmd.arg("-kernel")
         .arg(elf)
+        // Attach the same disk so the ATA driver and Mik-FS work here too.
+        .arg("-drive")
+        .arg(format!("format=raw,file={}", img.display()))
         .arg("-serial")
         .arg("stdio")
         .arg("-display")

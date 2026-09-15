@@ -14,7 +14,8 @@ fn kernel_elf_bytes() -> Vec<u8> {
 fn image_layout_is_bootable() {
     let img = build_image(&kernel_elf_bytes()).expect("build_image");
 
-    assert_eq!(img.len(), 128 * 1024, "image must be 128 KiB");
+    // 1 MiB: sectors 0-255 are the kernel load area, 256+ are Mik-FS.
+    assert_eq!(img.len(), 1024 * 1024, "image must be 1 MiB");
     assert_eq!(img[0], 0xFA, "boot sector must start with cli");
     assert_eq!(&img[510..512], &[0x55, 0xAA], "missing BIOS signature");
 

@@ -76,6 +76,8 @@ docs/
     ADR-011-serial-shell.md
     ADR-012-blocking-input.md
     ADR-013-console-drivers.md
+    ADR-014-ata-pio-block-device.md
+    ADR-015-mikfs-and-fd-syscalls.md
 README.md                   # Public project overview
 mik-emu/
   src/lib.rs                # Emulator library
@@ -94,7 +96,8 @@ mik-os-x86/
   src/lib.rs                # ELF parser, disk-image builder, QEMU launcher
   src/main.rs               # mik-os-x86 <build|image|qemu|pvh>
   kernel/src/               # no_std x86-64 kernel (boot16/stage2, mem, sched,
-                            # seg, pic, idt, serial, isr.S, user.S)
+                            # seg, pic, idt, serial, input, kbd, vga, pci,
+                            # ata, fs, isr.S, user.S)
   tests/                    # build_kernel, disk_image, boots_in_qemu
 run.ps1                     # One-command build/run
 tasks/
@@ -122,10 +125,11 @@ tasks/
 - The x86-64 kernel ELF carries three payloads: `.boot16` (512-byte boot
   sector at `0x7C00`, kernel length patched at `0x1F8`), `.stage2` (32-bit
   loader at `0x7E00`), and the kernel at `0x400000`. `mik-os-x86`'s image
-  builder packs them into a 128 KiB disk image (sector 0 = boot sector,
+  builder packs them into a 1 MiB disk image (sector 0 = boot sector,
   stage2 at `0x7E00`, kernel sections ≥ `0x400000`; the loader reads sectors
-  1–255 in two batches); stage2 reproduces the PVH handoff so `_start` is
-  shared. A 256-entry IDT prints `EXnn` and halts for exceptions.
+  1–255 in two batches; sectors 256+ are Mik-FS). stage2 reproduces the
+  PVH handoff so `_start` is shared. A 256-entry IDT prints `EXnn` and
+  halts for exceptions.
 - The boot sector collects the E820 memory map into phys `0x5000` (magic
   `'MMAP'`, u32 count, 24-byte entries); `e820.rs` parses it, with a
   synthetic fallback for the PVH path. `mem.rs` free-lists usable frames
@@ -140,8 +144,9 @@ tasks/
   frame) as a whole process context: `isr_timer`/`isr_syscall` build it,
   Rust handlers return which frame to resume, `irq_tail` + `iretq` performs
   the switch including `CR3`. Syscalls are `int 0x80` (rax=1 write,
-  2 exit, 3 yield, 4 fork, 5 exec, 6 sbrk, 7 read; rdi=arg) through a DPL-3
-  interrupt gate. `sys_read` is **blocking**: empty input marks the proc
+  2 exit, 3 yield, 4 fork, 5 exec, 6 sbrk, 7 read, 8 open, 9 close,
+  10 fread, 11 fwrite, 12 exec_file, 13 ls; rdi/rsi/rdx=args) through a
+  DPL-3 interrupt gate. `sys_read` is **blocking**: empty input marks the proc
   WAITING, rewinds `frame.rip` over the `int 0x80` (CD 80 = 2 bytes), and
   a device-ISR wake replays the syscall. `TSS.rsp0` points
   at the scheduled process's kernel stack. The PIC is remapped to vectors
@@ -166,12 +171,20 @@ tasks/
   leak (marked).
 - The serial shell (`prog_sh` in `user.S`, spawned third; `NPROC`=4) prints
   `mik> `, buffers a line in user space (echo, Enter submits \r or \n,
-  backspace erases), and handles `v` (version), `q` (exit — permanent,
-  nothing respawns it), or prints `?` for unknown commands. `sys_write`
-  mirrors to COM1 and the VGA text buffer at `0xB8000` (`vga.rs`);
-  `pci::scan()` enumerates the bus at boot. QEMU's `-serial stdio` is
-  bidirectional, so `boots_in_qemu.rs` types `v\nq\n` into QEMU's stdin
-  (paced per byte — QEMU's Windows chardev holds bursts) and asserts the
-  version banner.
+  backspace erases), splits CMD [ARGS], and dispatches `ls`, `cat NAME`,
+  `run NAME` (fork+exec_file), `mk NAME`, `w NAME TEXT`, `v`, `q`.
+  `sys_write` mirrors to COM1 and the VGA text buffer at `0xB8000`
+  (`vga.rs`); `pci::scan()` enumerates the bus at boot.
+- Storage: `ata.rs` is a polled LBA28 PIO driver on the primary-bus master
+  (FLUSH CACHE after every write — that's what makes files durable under
+  QEMU). `fs.rs` is Mik-FS: superblock at sector 256 (`MIKFS001` magic +
+  bump `next_free`), a 32-entry directory cached in memory and written
+  through, and contiguous 4 KiB file slots from sector 260. Missing magic
+  formats and seeds `hello.txt` + `x` (prog_d). File syscalls take the
+  first user pointers — `ustr_ok` requires each page in the private user
+  region mapped P|U. Per-process 4-slot fd tables (fds 0/1 = console) are
+  copied on `fork`; `exit` marks the slot EMPTY so `run` repeats.
+  `boots_in_qemu.rs` boots twice on one image: boot 1 drives
+  `cat`/`run`/`w`, boot 2 `cat`s the written file to prove persistence.
 
 See [`docs/decisions/`](docs/decisions/) for full ADRs.

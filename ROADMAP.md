@@ -44,7 +44,17 @@ the live process into a fresh address space running an embedded image —
 serial shows `ADcEDp` with `B`s interleaved by the timer. Phase 3 has
 begun with Milestone 3.1: a non-blocking `sys_read` over the COM1 UART and
 a ring-3 console shell (`mik> ` prompt, `v`/`q`/echo builtins) running as
-an ordinary scheduled process.
+an ordinary scheduled process. Milestone 3.2 added real device drivers:
+a PCI config-space scan, IRQ1 keyboard + IRQ4 UART input feeding a
+blocking `sys_read` (a `WAITING` process state that re-executes
+`int 0x80` on wake), a VGA text console mirrored with COM1, and shell
+line discipline. Milestone 3.3 added persistent storage: a polled ATA
+PIO driver on the boot disk, the flat contiguous **Mik-FS** layout at
+sector 256+, per-process fd tables behind new syscalls
+(`open`/`close`/`fread`/`fwrite`/`exec_file`/`ls` — the first to carry
+user pointers, validated by page-walk), a shell with `ls`/`cat`/`run`/
+`w`/`mk`, and `run NAME` as `fork`+`exec_file`. Writes survive a QEMU
+restart via FLUSH CACHE; the dual-boot test proves it.
 
 ## Phase 1: Mik-64 OS Core (Complete Learning Sandbox)
 
@@ -298,20 +308,23 @@ drivers, no kernel-side canonical tty.
 
 ### Milestone 3.3 — File System
 
-**Status:** Not started.
-
-**Goal:** Give the kernel persistent, named storage and let the shell launch programs from it.
-
-- Add a block device driver — a virtio-blk device (PCI vendor `0x1AF4`, simplest real-hardware protocol) or a RAM disk if driver complexity should stay out of this milestone. Define the `read_block`/`write_block` interface either way.
-- Design **Mik-FS**: a minimal disk layout — superblock, flat inode table, contiguous data blocks — deliberately simpler than ext2 (no indirect blocks, fixed directory).
-- Add a thin VFS layer (`open`/`read`/`write`/`close` on file descriptors per process) so the FS details stay behind the syscall boundary.
-- Extend the shell with `ls`, `cat`, and the ability to `exec` a program stored in Mik-FS instead of only embedded `prog_*` blobs — this makes `exec` real.
+**Status:** Complete — polled ATA PIO driver on the boot disk
+(`ata.rs`, LBA28 + FLUSH CACHE), the flat contiguous **Mik-FS** layout
+at sector 256+ (superblock + 32-entry directory + fixed 4 KiB file
+slots, `fs.rs`), per-process fd tables behind syscalls
+`open`/`close`/`fread`/`fwrite`/`exec_file`/`ls` — the first to take
+user pointers, validated by `ustr_ok` page-walk — and a shell with
+`ls`/`cat NAME`/`run NAME`/`mk NAME`/`w NAME TEXT`. `run` is
+`fork`+`exec_file` and `exit` now frees the slot, so it repeats.
+Deliberate simplifications (marked in code): space is bump-allocated and
+never reclaimed; 32 files x 4 KiB max; no directories/permissions; PIO
+instead of IRQ/DMA; no virtio.
 
 **Acceptance criteria:**
 
-- A file written through the syscall API survives a QEMU restart (data is on the disk image, not in RAM).
-- `ls` in the shell lists files; `cat` prints one; a program stored in Mik-FS runs in ring 3 via `exec`.
-- All existing tests still pass (the FS must not disturb the process demo).
+- A file written through the syscall API survives a QEMU restart (data is on the disk image, not in RAM). ✅ — the test boots twice on one image and `cat`s the file written in boot 1.
+- `ls` in the shell lists files; `cat` prints one; a program stored in Mik-FS runs in ring 3 via `exec`. ✅ — seeded `x` prints `X` via `run x`.
+- All existing tests still pass (the FS must not disturb the process demo). ✅ — `ADcEDp` asserted in the same test.
 
 ### Milestone 3.4 — Networking
 
