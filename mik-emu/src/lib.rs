@@ -45,12 +45,17 @@ pub struct Machine {
     timer_interval: u64,
     timer_counter: u64,
     pending_interrupt: bool,
+    // Interrupt-enable flag, cleared by any trap/fault/interrupt delivery and
+    // set by ERET/IRET/SRET, so handlers run uninterruptibly. Real CPUs do
+    // this in hardware on entry; here it is a single flag.
+    int_enabled: bool,
 }
 
 // CSR numbers.
 pub const CSR_PTBR: u64 = 0;
 pub const CSR_PMODE: u64 = 1;
 pub const CSR_TIMER: u64 = 2; // timer interval (when written, reloads the down counter)
+pub const CSR_EPC: u64 = 3; // read-only: saved pc from the last trap/fault/interrupt
 
 // PTE bits.
 const PTE_P: u64 = 1 << 0; // Present
@@ -120,6 +125,7 @@ impl Machine {
             timer_interval: 0,
             timer_counter: 0,
             pending_interrupt: false,
+            int_enabled: true,
         };
         // x15 is the stack pointer by convention.
         m.regs[15] = RAM_SIZE;
@@ -300,10 +306,11 @@ impl Machine {
         unreachable!();
     }
 
-    /// Deliver an interrupt: save the return PC, switch to supervisor mode,
-    /// and jump to the interrupt handler at `mem64[0x2020]`.
+    /// Deliver an interrupt: save the return PC, mask further interrupts,
+    /// switch to supervisor mode, and jump to the handler at `mem64[0x2020]`.
     fn deliver_interrupt(&mut self, faulting_pc: u64) {
         self.epc = faulting_pc;
+        self.int_enabled = false;
         self.previous_user_mode = self.user_mode;
         self.user_mode = false;
         let handler = u64::from_le_bytes(
@@ -317,6 +324,7 @@ impl Machine {
     /// handler at `mem64[0x2010]`.
     fn deliver_page_fault(&mut self, faulting_pc: u64, fault: PageFault) {
         self.epc = faulting_pc;
+        self.int_enabled = false;
         self.previous_user_mode = self.user_mode;
         self.user_mode = false;
         self.regs[10] = fault.code;
@@ -329,10 +337,10 @@ impl Machine {
     }
 
     pub fn step<W: Write>(&mut self, out: &mut W) -> Result<(), String> {
-        // If a timer interrupt is pending, deliver it before executing the
-        // current instruction. This is the only interrupt source in the first
-        // slice (see ponytail note above).
-        if self.pending_interrupt {
+        // If a timer interrupt is pending and enabled, deliver it before
+        // executing the current instruction. Delivery is masked while a
+        // handler runs so a tick can never clobber epc mid-handler.
+        if self.pending_interrupt && self.int_enabled {
             self.pending_interrupt = false;
             self.deliver_interrupt(self.pc);
             return Ok(());
@@ -473,9 +481,10 @@ impl Machine {
             }
             0x0E => {
                 // TRAP: save return address, set syscall number in x10,
-                // switch to supervisor mode, and jump through the trap
-                // vector at 0x2000.
+                // mask interrupts, switch to supervisor mode, and jump
+                // through the trap vector at 0x2000.
                 self.epc = self.pc;
+                self.int_enabled = false;
                 self.previous_user_mode = self.user_mode;
                 self.user_mode = false;
                 self.regs[10] = imm as u64;
@@ -487,13 +496,15 @@ impl Machine {
                 self.pc = self.regs[rs1];
             }
             0x10 => {
-                // ERET
+                // ERET: return, unmasking interrupts.
                 self.pc = self.epc;
+                self.int_enabled = true;
                 self.user_mode = self.previous_user_mode;
             }
             0x15 => {
                 // INT: software interrupt. x10 = imm, pc = mem64[0x2020].
                 self.epc = self.pc;
+                self.int_enabled = false;
                 self.previous_user_mode = self.user_mode;
                 self.user_mode = false;
                 self.regs[10] = imm as u64;
@@ -501,14 +512,16 @@ impl Machine {
                 self.pc = vector;
             }
             0x16 => {
-                // IRET: return from an interrupt.
+                // IRET: return from an interrupt, unmasking interrupts.
                 self.pc = self.epc;
+                self.int_enabled = true;
                 self.user_mode = self.previous_user_mode;
             }
             0x14 => {
                 // SRET: jump to regs[rs1] and enter user mode. This is the
                 // supervisor's way of returning/entering a user process.
                 self.pc = self.regs[rs1];
+                self.int_enabled = true;
                 self.previous_user_mode = self.user_mode;
                 self.user_mode = true;
             }
@@ -517,6 +530,8 @@ impl Machine {
                 let csr = (imm as u64) as usize & 0xFF;
                 self.regs[rd] = if csr == CSR_TIMER as usize {
                     self.timer_counter
+                } else if csr == CSR_EPC as usize {
+                    self.epc
                 } else {
                     self.csrs[csr]
                 };

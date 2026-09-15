@@ -391,8 +391,9 @@ The CSR file has 256 64-bit entries, accessed via `RDCSR` and `WRCSR`.
 | 1          | `PMODE`| Paging mode. 0 = disabled (flat physical), 1 = enabled (virtual addresses translated). |
 
 || 2          | `TIMER`| Timer interval (in emulator steps). Writing it reloads and starts the down counter. |
+|| 3          | `EPC`  | Read-only. Saved `pc` from the most recent `TRAP`/`INT`/fault delivery. |
 
-CSRs 3..255 are reserved for future use. See `docs/specs/mik-64-paging.md` for
+CSRs 4..255 are reserved for future use. See `docs/specs/mik-64-paging.md` for
 the full paging specification.
 
 ## 7. Boot protocol
@@ -441,6 +442,11 @@ The `INT` instruction is a software interrupt: it stores the return address in
 `epc`, writes the interrupt number to `x10`, and jumps to the address stored at
 the interrupt vector `0x2020`. `IRET` returns to `epc`. Timer expiry also uses
 the `0x2020` vector.
+
+Interrupt delivery is controlled by an internal interrupt-enable flag: every
+`TRAP`/`INT`/fault delivery clears it, and `ERET`, `IRET`, and `SRET` set it.
+A pending timer interrupt therefore waits until the current handler returns,
+so trap and fault handlers are never interrupted mid-flight.
 
 Page faults jump to the address stored at `0x2010`. The fault code is placed in
 `x10` and the faulting virtual address in `x11`. See `docs/specs/mik-64-paging.md`
