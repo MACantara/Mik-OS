@@ -1,5 +1,11 @@
 # Mik OS: VM-First Learning Direction
 
+> **Where this landed:** Act I is complete — the Mik-64 VM, emulator, and a
+> kernel with processes, demand paging, and timer scheduling all shipped
+> (Phase 1). Act II is well underway — the x86-64 kernel boots a real BIOS
+> disk image under QEMU and reproduces the Mik-64 process model end to end
+> (Phase 2), plus a serial console shell (M3.1). See `ROADMAP.md`.
+
 ## Problem Statement
 
 How might we design a from-scratch x86-64 operating system called Mik OS that gives me a deep understanding of OS internals, while sidestepping the pain of real hardware support by first building a simplified but realistic virtual machine and emulator?
