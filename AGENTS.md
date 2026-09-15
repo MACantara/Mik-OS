@@ -76,19 +76,25 @@ README.md                   # Public project overview
 mik-emu/
   src/lib.rs                # Emulator library
   src/main.rs               # CLI wrapper
-  tests/                    # Integration tests
+  tests/                    # Instruction-level tests
 mik-os/
   src/lib.rs                # Hand-assembled Mik-64 kernel
   src/main.rs               # Binary builder
+  user/                     # init.s, prog1.s — assembled at build time
+  tests/                    # Kernel integration tests (boot, paging, os.rs demo)
 mik-asm/
   src/lib.rs                # Text-to-binary Mik-64 assembler
   src/main.rs               # mik-asm <in.s> <out.bin>
-  tests/kernel_boot.rs      # Boot output test
-  tests/kernel_paging.rs    # Paging enablement test
-  tests/pagefault.rs        # Kernel page-fault handler test
+  tests/assembler.rs        # Assembler unit tests
+mik-os-x86/
+  src/lib.rs                # ELF parser, disk-image builder, QEMU launcher
+  src/main.rs               # mik-os-x86 <build|image|qemu|pvh>
+  kernel/src/               # no_std x86-64 kernel (boot16/stage2, mem, sched,
+                            # seg, pic, idt, serial, isr.S, user.S)
+  tests/                    # build_kernel, disk_image, boots_in_qemu
 run.ps1                     # One-command build/run
 tasks/
-  plan.md                   # Implementation plan with acceptance criteria
+  plan.md                   # Historical per-milestone plan (see ~/.devin/plans)
   todo.md                   # Progress checklist
 ```
 
