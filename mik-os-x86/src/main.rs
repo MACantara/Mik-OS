@@ -1,36 +1,28 @@
+use mik_os_x86::{build_image, disk_image, find_qemu, kernel_elf, workspace_root};
 use std::env;
-use std::path::{Path, PathBuf};
 use std::process::Command;
 
 fn main() {
     let mut args = env::args().skip(1);
     match args.next().as_deref() {
         Some("build") => build_kernel(),
-        Some("qemu") | Some("run") => run_kernel(),
+        Some("image") => {
+            build_kernel();
+            write_image();
+        }
+        // `qemu` boots the real BIOS path: boot sector -> stage2 -> kernel.
+        Some("qemu") | Some("run") => run_disk(),
+        // `pvh` keeps the QEMU -kernel direct-boot path for comparison.
+        Some("pvh") => run_pvh(),
         _ => {
-            eprintln!("usage: mik-os-x86 <build|qemu>");
+            eprintln!("usage: mik-os-x86 <build|image|qemu|pvh>");
             std::process::exit(1);
         }
     }
 }
 
-fn workspace_root() -> PathBuf {
-    PathBuf::from(env::var("CARGO_MANIFEST_DIR").expect("CARGO_MANIFEST_DIR"))
-        .parent()
-        .expect("manifest has parent")
-        .to_path_buf()
-}
-
 fn cargo() -> String {
     env::var("CARGO").unwrap_or_else(|_| "cargo".to_string())
-}
-
-fn kernel_elf() -> PathBuf {
-    workspace_root()
-        .join("target")
-        .join("x86_64-unknown-none")
-        .join("debug")
-        .join("mik-os-x86-kernel")
 }
 
 fn build_kernel() {
@@ -49,41 +41,44 @@ fn build_kernel() {
     }
 }
 
-fn find_qemu() -> PathBuf {
-    if let Ok(p) = env::var("QEMU") {
-        return PathBuf::from(p);
-    }
-    if let Ok(output) = Command::new("where").arg("qemu-system-x86_64").output() {
-        let s = String::from_utf8_lossy(&output.stdout);
-        let line = s.lines().next().unwrap_or("").trim();
-        if !line.is_empty() && Path::new(line).exists() {
-            return PathBuf::from(line);
-        }
-    }
-    let candidates = [
-        r"C:\Program Files\qemu\qemu-system-x86_64.exe",
-        r"C:\Program Files (x86)\qemu\qemu-system-x86_64.exe",
-    ];
-    for c in &candidates {
-        if Path::new(c).exists() {
-            return PathBuf::from(c);
-        }
-    }
-    eprintln!("qemu-system-x86_64 not found; set QEMU or add it to PATH");
-    std::process::exit(1);
+fn write_image() -> std::path::PathBuf {
+    let elf = kernel_elf();
+    let img = disk_image();
+    let elf_bytes = std::fs::read(&elf).expect("kernel ELF not built");
+    let image = build_image(&elf_bytes).expect("failed to build disk image");
+    std::fs::write(&img, &image).expect("failed to write disk image");
+    println!("wrote {} ({} bytes)", img.display(), image.len());
+    img
 }
 
-fn run_kernel() {
+fn run_disk() {
     build_kernel();
-    let elf = kernel_elf();
-    if !elf.exists() {
-        eprintln!("kernel ELF not found at {}", elf.display());
-        std::process::exit(1);
-    }
+    let img = write_image();
     let qemu = find_qemu();
     let mut cmd = Command::new(qemu);
-    cmd.arg("-kernel").arg(elf)
-        .arg("-serial").arg("stdio")
+    cmd.arg("-drive")
+        .arg(format!("format=raw,file={}", img.display()))
+        .arg("-serial")
+        .arg("stdio")
+        .arg("-display")
+        .arg("none")
+        .arg("-no-reboot")
+        .arg("-no-shutdown");
+    let status = cmd.status().expect("failed to run qemu");
+    std::process::exit(status.code().unwrap_or(1));
+}
+
+fn run_pvh() {
+    build_kernel();
+    let elf = kernel_elf();
+    let qemu = find_qemu();
+    let mut cmd = Command::new(qemu);
+    cmd.arg("-kernel")
+        .arg(elf)
+        .arg("-serial")
+        .arg("stdio")
+        .arg("-display")
+        .arg("none")
         .arg("-no-reboot")
         .arg("-no-shutdown");
     let status = cmd.status().expect("failed to run qemu");

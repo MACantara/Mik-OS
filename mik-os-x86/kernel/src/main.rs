@@ -4,6 +4,8 @@
 use core::arch::global_asm;
 
 global_asm!(include_str!("boot.S"));
+global_asm!(include_str!("boot16.S"));
+global_asm!(include_str!("stage2.S"));
 
 #[no_mangle]
 pub extern "C" fn kmain() -> ! {
