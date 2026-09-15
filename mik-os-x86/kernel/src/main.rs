@@ -8,21 +8,34 @@ global_asm!(include_str!("boot16.S"));
 global_asm!(include_str!("stage2.S"));
 global_asm!(include_str!("isr.S"));
 
+mod e820;
 mod idt;
+mod serial;
 
 #[no_mangle]
 pub extern "C" fn kmain() -> ! {
-    const COM1: u16 = 0x3f8;
-    let banner = b"Mik-64 -> x86-64 long mode\n";
+    serial::write_str("Mik-64 -> x86-64 long mode\n");
     unsafe {
-        // ponytail: assumes QEMU's COM1 transmitter is ready; a real UART
-        // would poll the line status register (LSR) bit 5 (THRE) before each out.
-        for b in banner {
-            core::arch::asm!("out dx, al", in("dx") COM1, in("al") *b);
-        }
         idt::init();
+    }
+
+    let mut map = [e820::E820Entry { base: 0, len: 0, typ: 0, acpi: 0 }; 32];
+    let n = e820::read_map(&mut map);
+    serial::write_str("e820 entries=");
+    serial::write_dec(n as u64);
+    let mut usable = 0u64;
+    for e in &map[..n] {
+        if e.usable() {
+            usable += e.len;
+        }
+    }
+    serial::write_str(" usable=");
+    serial::write_dec(usable / 1024);
+    serial::write_str("K\n");
+
+    unsafe {
         // Prove the IDT works: int3 delivers vector 3 to the stub, which
-        // prints "EX03" on COM1 and halts.
+        // prints "EX03" on COM1 and halts. Runs last — it never returns.
         core::arch::asm!("int3");
     }
     loop {
