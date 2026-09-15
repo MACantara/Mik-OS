@@ -148,3 +148,41 @@ pub unsafe fn build_user_table() -> u64 {
     *(updpt as *mut u64) = core::ptr::addr_of!(pd) as u64 | PTE_P | PTE_W;
     up4
 }
+
+/// Clone a user address space for `fork`: fresh PML4/PDPT/PD/PT frames whose
+/// leaf PTEs point at the *same* physical frames as the parent's, with the
+/// write bit cleared on BOTH sides. The first write by either process takes
+/// a copy-on-write fault and gets a private copy — pages that are only read
+/// stay shared forever. The kernel PD stays shared (supervisor-only).
+///
+/// Caller must flush the parent's TLB afterwards (reload its CR3) or the
+/// parent could still write through its now-stale writable translation.
+pub unsafe fn clone_user_table(parent: *mut u64) -> u64 {
+    let child = build_user_table();
+    let p_pdpt = (*parent & !0xFFF) as *mut u64;            // parent pml4[0]
+    let c_pdpt = (*(child as *mut u64) & !0xFFF) as *mut u64; // child pml4[0]
+    let p_upd = (*p_pdpt.add(1) & !0xFFF) as *mut u64;      // parent private PD
+    let c_upd = alloc_frame().expect("out of frames for fork pd") as *mut u64;
+    core::ptr::write_bytes(c_upd as *mut u8, 0, 4096);
+    *c_pdpt.add(1) = c_upd as u64 | PTE_P | PTE_W | PTE_U;
+    for i in 0..512 {
+        let pde = *p_upd.add(i);
+        if pde & PTE_P == 0 {
+            continue;
+        }
+        let p_pt = (pde & !0xFFF) as *mut u64;
+        let c_pt = alloc_frame().expect("out of frames for fork pt") as *mut u64;
+        core::ptr::write_bytes(c_pt as *mut u8, 0, 4096);
+        *c_upd.add(i) = c_pt as u64 | PTE_P | PTE_W | PTE_U;
+        for j in 0..512 {
+            let pte = *p_pt.add(j);
+            if pte & PTE_P == 0 {
+                continue;
+            }
+            let shared_ro = pte & !PTE_W; // same frame, read-only both sides
+            *p_pt.add(j) = shared_ro;
+            *c_pt.add(j) = shared_ro;
+        }
+    }
+    child
+}

@@ -66,6 +66,7 @@ const USER_CODE_VA: u64 = 0x4000_0000;
 const USER_STACK_VA: u64 = 0x4000_1000; // one page; rsp starts at its top
 const USER_DATA_VA: u64 = 0x4000_2000;  // heap base; [base, brk) demand-paged
 const BRK_MAX: u64 = USER_DATA_VA + 0x1_0000; // 64 KiB cap on sbrk growth
+const USER_REGION_END: u64 = 0x8000_0000; // end of the private user PD span
 
 extern "C" {
     fn enter_user(frame: *mut IrqFrame) -> !;
@@ -173,6 +174,37 @@ unsafe extern "C" fn syscall_handler(frame: *mut IrqFrame) -> *mut IrqFrame {
             schedule(frame)
         }
         3 => schedule(frame),
+        4 => {
+            // fork: clone the user tables read-only-shared (COW), copy the
+            // live frame onto the child's kernel stack, and give the child
+            // rax=0 while the parent sees 1. Resumes the same frame — the
+            // child is dispatched by a later yield/exit/tick.
+            let procs = &mut *core::ptr::addr_of_mut!(PROCS);
+            let cur = *core::ptr::addr_of!(CUR);
+            match procs.iter().position(|p| p.state == EMPTY) {
+                Some(i) => {
+                    let cp4 = mem::clone_user_table(procs[cur].pml4 as *mut u64);
+                    let kstack = mem::alloc_frame().expect("out of frames for kstack");
+                    let ktop = kstack + 0x1000;
+                    let cfp = (ktop - core::mem::size_of::<IrqFrame>() as u64) as *mut IrqFrame;
+                    core::ptr::copy_nonoverlapping(f, cfp, 1);
+                    (*cfp).rax = 0;
+                    procs[i] = Proc {
+                        pml4: cp4,
+                        kstack_top: ktop,
+                        frame: cfp,
+                        state: READY,
+                        brk: procs[cur].brk,
+                    };
+                    f.rax = 1;
+                    // Parent's pages just lost W: flush its TLB so a stale
+                    // writable translation can't bypass the COW fault.
+                    mem::switch_cr3(procs[cur].pml4);
+                }
+                None => f.rax = u64::MAX,
+            }
+            frame
+        }
         6 => {
             // sbrk: lazily grow the demand region — no pages are mapped yet;
             // the first touch of each page faults and pf_handler maps it.
@@ -212,6 +244,25 @@ extern "C" fn pf_handler(frame: *mut IrqFrame, err: u64) -> *mut IrqFrame {
             );
             core::arch::asm!("invlpg [{}]", in(reg) page, options(nostack));
             return frame;
+        }
+        // Copy-on-write: present + write fault on a private user page whose
+        // PTE lost W at fork. Give the faulting process a private copy and
+        // retry; the other side keeps the shared frame read-only.
+        if err & 3 == 3 && cr2 >= USER_CODE_VA && cr2 < USER_REGION_END {
+            let pte = mem::find_pte(procs[cur].pml4 as *const u64, cr2);
+            if !pte.is_null()
+                && *pte & (mem::PTE_P | mem::PTE_U | mem::PTE_W) == (mem::PTE_P | mem::PTE_U)
+            {
+                let fr = mem::alloc_frame().expect("out of frames for COW");
+                core::ptr::copy_nonoverlapping(
+                    (*pte & !0xFFF) as *const u8,
+                    fr as *mut u8,
+                    4096,
+                );
+                *pte = fr | (*pte & 0xFFF) | mem::PTE_W;
+                core::arch::asm!("invlpg [{}]", in(reg) cr2 & !0xFFF, options(nostack));
+                return frame;
+            }
         }
         let f = &*frame;
         serial::write_str("EX0E cr2=");
