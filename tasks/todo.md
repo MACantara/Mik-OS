@@ -92,3 +92,22 @@ Deferred: COW `fork`, pseudo file system / `READ` syscall.
 
 Deferred: resumable interrupt stubs, PIC/APIC IRQ plumbing (M2.3), memory-map
 parsing (M2.2).
+
+# Mik OS x86-64 Milestone 2.2 Closeout Todo
+
+## Checkpoint: x86-64 Memory Management
+
+- [x] Task 1: E820 scan in `boot16.S` (INT 15h -> `0x5000`), `e820.rs` parser
+      with PVH fallback map, `serial.rs` print helpers
+- [x] Task 2: Free-list frame allocator seeded from E820 (skip <1 MiB and
+      kernel image); identity map extended to 1 GiB from Rust, CR3 reloaded
+- [x] Task 3: Second address space — `up4` sharing kernel PD + private user
+      PD; `map_4k` walk/alloc; `user.S` blob at `0x40000000` run via `call`
+      under `mov cr3`
+- [x] `cargo test -p mik-os-x86` passes (`boots_in_qemu.rs` asserts frames
+      report, alloc/free sanity, `U`, `EX03`)
+- [x] ADR-005 (E820 + free list), ADR-006 (address-space sharing), concepts
+      docs, ROADMAP/AGENTS updated
+
+Deferred: ring-3 execution (M2.3), demand paging + page-fault-driven
+`map_4k` (M2.4), higher-half kernel layout.

@@ -27,6 +27,30 @@ boot16_start:
     int 0x13
     jc boot_fail
 
+    // INT 15h E820 memory map -> phys 0x5000: u32 magic 'MMAP', u32 count,
+    // then 24-byte entries (base u64, length u64, type u32, acpi u32). This
+    // must happen in real mode — BIOS calls vanish once CR0.PE is set. Each
+    // call writes one entry at es:di and advances ebx; ebx==0 means done.
+    mov dword ptr [0x5000], 0x50414D4D  // 'MMAP' magic
+    mov di, 0x5008
+    xor bp, bp                  // entry count (BIOS does not advance di;
+                                // SeaBIOS preserves it, so a running di is ok)
+    xor ebx, ebx                // continuation token
+e820_loop:
+    mov eax, 0xE820
+    mov ecx, 24
+    mov edx, 0x534D4150         // 'SMAP'
+    int 0x15
+    jc e820_done                // CF: unsupported, or read error
+    cmp eax, 0x534D4150         // BIOS must echo SMAP in eax
+    jne e820_done
+    inc bp
+    add di, 24
+    test ebx, ebx
+    jnz e820_loop
+e820_done:
+    mov [0x5004], bp            // u32 count at 0x5004
+
     // Enable A20 via the port 0x92 fast gate: set bit 1, keep bit 0 (fast
     // reset) clear.
     in al, 0x92

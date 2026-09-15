@@ -241,3 +241,33 @@ Add a tiny text-to-binary assembler for Mik-64 so user programs can be written i
 | Two-pass label resolution has off-by-one errors in branch offsets | High | Keep the test simple with only a few labels and assert exact output. |
 | New crate workspace integration breaks existing builds | Medium | Build the full workspace and run all tests after adding `mik-asm`. |
 | Over-engineering a full assembler | Medium | Support only the syntax needed for the first test; don't add macros or complex directives. |
+
+# Implementation Plan: x86-64 Paging and Memory Management (M2.2)
+
+## Overview
+
+Port the Mik-64 memory model to real hardware: the boot sector collects the BIOS E820 memory map in real mode, a free-list allocator manages usable frames, the kernel extends its own identity map to 1 GiB, and a second PML4 demonstrates CR3 switching with a private user region.
+
+## Architecture Decisions
+
+- **E820 is collected in `boot16.S` real mode** and parked at phys `0x5000` (magic + count + 24-byte entries): BIOS services only exist before `CR0.PE`.
+- **PVH path uses a synthetic fallback map** (1-4 MiB + `__bss_end`..128 MiB) since no BIOS ran — the primary disk path always has real data.
+- **Free-list allocator stores links inside free frames:** O(1) alloc/free, no backing structure; init skips frames <1 MiB and the kernel image.
+- **Identity map extended in place:** boot.S's `.bss` PD entries 3..511 filled with 2 MiB `PS` mappings, then CR3 reloaded — no bootstrap-alloc problem. Must happen before `mem::init` because free-list seeding writes into every frame.
+- **User address space shares the kernel PD** (PDPT[0]) and gets a private PD at PDPT[1] covering `0x40000000..0x80000000` — the Mik-64 shared-kernel/private-user shape.
+
+## Task List
+
+- [x] Task 1: E820 scan + parser + serial print helpers.
+- [x] Task 2: Frame allocator + 1 GiB identity-map extension.
+- [x] Task 3: User address space, `map_4k`, `switch_cr3`, `user.S` blob demo.
+- [x] Task 4: QEMU test assertions for frames report, alloc sanity, `U`, `EX03`.
+- [x] Task 5: ADR-005/006, concepts + why-it-matters docs, ROADMAP/AGENTS.
+
+## Risks and Mitigations
+
+| Risk | Impact | Mitigation |
+|------|--------|------------|
+| Free-list init writes to unmapped frames (>6 MiB under boot tables) | High | Extend identity map before seeding; IDT reports EX0E instead of triple fault. |
+| BIOS clobbering `di` mid-E820-scan | Low | SeaBIOS preserves it; documented simplification under QEMU. |
+| User page colliding with kernel identity PD entries | Medium | User region placed at `0x40000000`, beyond the identity PD's 1 GiB reach. |

@@ -31,6 +31,9 @@ is no pseudo file system / `READ` syscall yet. Phase 2 has started: Milestone
 disk image through real mode, protected mode, and into long mode, where the
 kernel installs a GDT, a minimal IDT, initial page tables, and prints a
 serial banner. The PVH direct-boot path remains available for comparison.
+Milestone 2.2 is also complete — an E820-fed free-list frame allocator, a
+kernel-owned 1 GiB identity map, and `CR3` switching to a second address
+space that runs a user page.
 
 ## Phase 1: Mik-64 OS Core (Complete Learning Sandbox)
 
@@ -158,7 +161,14 @@ image; `pvh` keeps the direct-boot path. Verified by
 
 ### Milestone 2.2 — x86-64 Paging and Memory Management
 
-**Status:** Not started.
+**Status:** Complete — the boot sector collects the BIOS E820 memory map into
+a fixed buffer at `0x5000` (the PVH path uses a documented synthetic
+fallback); `mem.rs` builds a free-list frame allocator over the usable
+regions (excluding <1 MiB and the kernel image); the identity map is extended
+to 1 GiB from Rust by filling the `.bss` PD and reloading `CR3`; and a second
+address space — a PML4 sharing the kernel PD with a private user PD — runs a
+`PTE_U` page at `0x40000000`, proven by the `U` byte on serial under its own
+CR3. Verified by `mik-os-x86/tests/boots_in_qemu.rs`.
 
 **Goal:** Re-implement the Mik-64 memory concepts on real x86-64 page tables.
 
