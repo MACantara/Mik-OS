@@ -137,15 +137,19 @@ pub fn disk_image() -> PathBuf {
     workspace_root().join("target").join("mik-os-x86.img")
 }
 
-pub fn find_qemu() -> PathBuf {
+/// Locate qemu-system-x86_64: `$QEMU`, then PATH, then Program Files.
+pub fn try_find_qemu() -> Option<PathBuf> {
     if let Ok(p) = env::var("QEMU") {
-        return PathBuf::from(p);
+        let p = PathBuf::from(p);
+        if p.exists() {
+            return Some(p);
+        }
     }
     if let Ok(output) = Command::new("where").arg("qemu-system-x86_64").output() {
         let s = String::from_utf8_lossy(&output.stdout);
         let line = s.lines().next().unwrap_or("").trim();
         if !line.is_empty() && Path::new(line).exists() {
-            return PathBuf::from(line);
+            return Some(PathBuf::from(line));
         }
     }
     for c in [
@@ -153,8 +157,12 @@ pub fn find_qemu() -> PathBuf {
         r"C:\Program Files (x86)\qemu\qemu-system-x86_64.exe",
     ] {
         if Path::new(c).exists() {
-            return PathBuf::from(c);
+            return Some(PathBuf::from(c));
         }
     }
-    panic!("qemu-system-x86_64 not found; set QEMU or add it to PATH");
+    None
+}
+
+pub fn find_qemu() -> PathBuf {
+    try_find_qemu().expect("qemu-system-x86_64 not found; set QEMU or add it to PATH")
 }
