@@ -4,11 +4,12 @@ use std::process::{Command, Stdio};
 use std::time::Duration;
 
 /// Boot the BIOS disk image under QEMU and check the serial output: the
-/// kernel banner, the memory-init report, the second-address-space demo
-/// ('U' printed by the user page under its own CR3), and "EX03" from the
-/// int3 exercising the IDT.
+/// kernel banner, the memory-init report, then the Phase 2.3 scheduler demo —
+/// process A prints 'A', yields to B which prints 'B', a timer tick preempts
+/// B back to A which prints 'a', yields again, then prints 'A' and exits,
+/// leaving B to idle under the tick. Interleaved user output must be "ABaA".
 #[test]
-fn bios_image_boots_and_idt_fires() {
+fn bios_image_boots_and_scheduler_interleaves() {
     let Some(qemu) = try_find_qemu() else {
         eprintln!("qemu-system-x86_64 not found; skipping boot test");
         return;
@@ -32,8 +33,8 @@ fn bios_image_boots_and_idt_fires() {
         .spawn()
         .expect("spawn qemu");
 
-    // The kernel halts forever, so drain serial on a thread and kill QEMU
-    // once it has had time to print.
+    // The kernel idles under the timer forever, so drain serial on a thread
+    // and kill QEMU once it has had time to print.
     let mut stdout = child.stdout.take().unwrap();
     let reader = std::thread::spawn(move || {
         let mut s = String::new();
@@ -58,8 +59,13 @@ fn bios_image_boots_and_idt_fires() {
         "free-list sanity check failed, got: {out:?}"
     );
     assert!(
-        out.contains("U <- ran under second CR3"),
-        "user page did not run under its own CR3, got: {out:?}"
+        out.contains("sched: 2 procs"),
+        "scheduler did not spawn the two user processes, got: {out:?}"
     );
-    assert!(out.contains("EX03"), "int3 did not reach the IDT, got: {out:?}");
+    // The interleaved user output appears verbatim after the sched banner:
+    // 'A' + yield, 'B' + spin, tick -> 'a' + yield, tick -> 'A' + exit.
+    assert!(
+        out.contains("ABaA"),
+        "timer/syscall interleave missing (want ABaA), got: {out:?}"
+    );
 }
