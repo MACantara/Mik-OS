@@ -18,6 +18,19 @@ pub fn write_byte(b: u8) {
     unsafe { outb(COM1, b) }
 }
 
+/// Non-blocking read: `Some(byte)` if COM1's receiver has data (LSR bit 0),
+/// `None` otherwise. The shell polls this through `sys_read`; an
+/// interrupt-driven UART read is a later upgrade (IRQ4 unmask + buffer).
+pub fn read_byte() -> Option<u8> {
+    unsafe {
+        if inb(COM1 + 5) & 1 != 0 {
+            Some(inb(COM1))
+        } else {
+            None
+        }
+    }
+}
+
 pub fn write_str(s: &str) {
     for &b in s.as_bytes() {
         write_byte(b);
