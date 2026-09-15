@@ -70,6 +70,8 @@ const USER_REGION_END: u64 = 0x8000_0000; // end of the private user PD span
 
 extern "C" {
     fn enter_user(frame: *mut IrqFrame) -> !;
+    static prog_c_start: u8;
+    static prog_c_end: u8;
 }
 
 /// Create a process running `code` in a fresh address space.
@@ -203,6 +205,38 @@ unsafe extern "C" fn syscall_handler(frame: *mut IrqFrame) -> *mut IrqFrame {
                 }
                 None => f.rax = u64::MAX,
             }
+            frame
+        }
+        5 => {
+            // exec: replace the user address space with a fresh table
+            // running the embedded prog_c image, and rewrite the current
+            // frame so iretq enters the new program in ring 3.
+            // Old user frames/tables are leaked — a real exec frees them;
+            // the upgrade path is a table walker over the private PD chain.
+            let code = core::slice::from_raw_parts(
+                &prog_c_start as *const u8,
+                &prog_c_end as *const u8 as usize - &prog_c_start as *const u8 as usize,
+            );
+            let pml4 = mem::build_user_table();
+            let cf = mem::alloc_frame().expect("out of frames for exec code");
+            core::ptr::copy_nonoverlapping(code.as_ptr(), cf as *mut u8, code.len());
+            mem::map_4k(pml4 as *mut u64, USER_CODE_VA, cf, mem::PTE_P | mem::PTE_W | mem::PTE_U);
+            let sf = mem::alloc_frame().expect("out of frames for exec stack");
+            mem::map_4k(pml4 as *mut u64, USER_STACK_VA, sf, mem::PTE_P | mem::PTE_W | mem::PTE_U);
+            let procs = &mut *core::ptr::addr_of_mut!(PROCS);
+            let cur = *core::ptr::addr_of!(CUR);
+            procs[cur].pml4 = pml4;
+            procs[cur].brk = USER_DATA_VA;
+            *f = IrqFrame {
+                r15: 0, r14: 0, r13: 0, r12: 0, r11: 0, r10: 0, r9: 0, r8: 0,
+                rbp: 0, rdi: 0, rsi: 0, rdx: 0, rcx: 0, rbx: 0, rax: 0,
+                rip: USER_CODE_VA,
+                cs: seg::UCODE as u64,
+                rflags: 0x202,
+                rsp: USER_STACK_VA + 0x1000,
+                ss: seg::UDATA as u64,
+            };
+            mem::switch_cr3(pml4);
             frame
         }
         6 => {
